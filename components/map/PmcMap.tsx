@@ -60,7 +60,7 @@ export default function PmcMap({ orbit, pixels, clusters }: { orbit: OrbitGeoJso
     if (!instance || !pixels || !clusters) return;
     const apply = () => {
       instance.setRenderWorldCopies(false);
-      for (const layer of ["pmc-pixels", "pmc-cluster-outline", "pmc-cluster-fill"]) if (instance.getLayer(layer)) instance.removeLayer(layer);
+      for (const layer of ["pmc-pixel-outline", "pmc-pixels", "pmc-cluster-outline", "pmc-cluster-fill"]) if (instance.getLayer(layer)) instance.removeLayer(layer);
       for (const source of ["pmc-pixels", "pmc-clusters"]) if (instance.getSource(source)) instance.removeSource(source);
       instance.addSource("pmc-pixels", { type: "geojson", data: pixels });
       instance.addSource("pmc-clusters", { type: "geojson", data: clusters });
@@ -72,16 +72,23 @@ export default function PmcMap({ orbit, pixels, clusters }: { orbit: OrbitGeoJso
           "fill-outline-color": ["match", ["get", "qualityLevel"], "high", "#ff8b91", "medium", "#fff0a3", "#82b7ff"],
         },
       });
+      instance.addLayer({
+        id: "pmc-pixel-outline", type: "line", source: "pmc-pixels",
+        paint: {
+          "line-color": ["match", ["get", "qualityLevel"], "high", "#ff2338", "medium", "#e9b900", "#1268d6"],
+          "line-width": ["interpolate", ["linear"], ["zoom"], 2, .7, 6, 1.6],
+          "line-opacity": .95,
+        },
+      });
       const popup = (event: maplibregl.MapLayerMouseEvent) => {
         const p = event.features?.[0]?.properties; if (!p) return;
         new maplibregl.Popup().setLngLat(event.lngLat).setHTML(`<strong>Вероятный PMC · ${String(p.qualityLevel).toUpperCase()}</strong><br>Residual: ${Number(p.residual).toExponential(3)}<br>Порог: ${Number(p.threshold).toExponential(3)}<br>S/N: ${Number(p.signalToNoise).toFixed(2)}<br>Detection score: ${Number(p.detectionScore).toFixed(2)}<br>Пикселей в кластере: ${p.pixelCount}`).addTo(instance);
       };
       instance.off("click", "pmc-pixels", popup);
       instance.on("click", "pmc-pixels", popup);
-      if (pixels.features.length) {
-        const coordinates = pixels.features.flatMap((feature) => feature.geometry.coordinates[0]);
-        const bounds = coordinates.reduce((box, coordinate) => box.extend(coordinate as [number, number]), new maplibregl.LngLatBounds(coordinates[0] as [number, number], coordinates[0] as [number, number]));
-        instance.fitBounds(bounds, { padding: 70, maxZoom: 5, duration: 900 });
+      if (clusters.features.length) {
+        const largest = clusters.features.reduce((best, feature) => feature.properties.pixelCount > best.properties.pixelCount ? feature : best);
+        instance.flyTo({ center: largest.properties.centroid, zoom: 4.8, duration: 900 });
       }
     };
     if (instance.isStyleLoaded()) apply(); else instance.once("load", apply);
