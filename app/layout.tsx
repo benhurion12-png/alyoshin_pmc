@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./globals.css";
+import "./pmc.css";
 
 export const metadata: Metadata = {
   title: "TROPOMI PMC Explorer",
