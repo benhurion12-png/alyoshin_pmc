@@ -46,6 +46,10 @@ export default function PmcMap({ orbit, pixels, clusters }: { orbit: OrbitGeoJso
         instance.addLayer({ id: "orbit-outline", type: "line", source: "orbit-footprint", paint: { "line-color": "#8bf3ff", "line-width": 2 } });
       }
       instance.setPaintProperty("orbit-fill", "fill-opacity", 0.025);
+      if (pixels?.features.length) {
+        instance.setLayoutProperty("orbit-fill", "visibility", "none");
+        instance.setPaintProperty("orbit-outline", "line-opacity", .25);
+      }
       const coordinates = orbit.features[0]?.geometry.coordinates[0] ?? [];
       if (coordinates.length) {
         const bounds = coordinates.reduce((b, c) => b.extend(c as [number, number]), new maplibregl.LngLatBounds(coordinates[0] as [number, number], coordinates[0] as [number, number]));
@@ -53,13 +57,18 @@ export default function PmcMap({ orbit, pixels, clusters }: { orbit: OrbitGeoJso
       }
     };
     if (instance.isStyleLoaded()) apply(); else instance.once("load", apply);
-  }, [orbit]);
+  }, [orbit, pixels]);
 
   useEffect(() => {
     const instance = map.current;
     if (!instance || !pixels || !clusters) return;
     const apply = () => {
       instance.setRenderWorldCopies(false);
+      if (clusters.features.length) {
+        const largest = clusters.features.reduce((best, feature) => feature.properties.pixelCount > best.properties.pixelCount ? feature : best);
+        const [centerLon, centerLat] = largest.properties.centroid;
+        if (Number.isFinite(centerLon) && Number.isFinite(centerLat)) instance.jumpTo({ center: [centerLon, centerLat], zoom: 5.2 });
+      }
       for (const layer of ["pmc-pixel-outline", "pmc-pixels", "pmc-cluster-outline", "pmc-cluster-fill"]) if (instance.getLayer(layer)) instance.removeLayer(layer);
       for (const source of ["pmc-pixels", "pmc-clusters"]) if (instance.getSource(source)) instance.removeSource(source);
       instance.addSource("pmc-pixels", { type: "geojson", data: pixels });
@@ -86,10 +95,6 @@ export default function PmcMap({ orbit, pixels, clusters }: { orbit: OrbitGeoJso
       };
       instance.off("click", "pmc-pixels", popup);
       instance.on("click", "pmc-pixels", popup);
-      if (clusters.features.length) {
-        const largest = clusters.features.reduce((best, feature) => feature.properties.pixelCount > best.properties.pixelCount ? feature : best);
-        instance.flyTo({ center: largest.properties.centroid, zoom: 4.8, duration: 900 });
-      }
     };
     if (instance.isStyleLoaded()) apply(); else instance.once("load", apply);
   }, [pixels, clusters]);

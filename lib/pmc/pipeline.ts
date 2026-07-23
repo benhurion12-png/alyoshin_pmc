@@ -61,7 +61,12 @@ export function detectPmc(input: PmcInput): ProcessingResult {
       if (residuals[0][i] > maxResidual) { maxResidual = residuals[0][i]; representative = i; }
       const cornerOffset = i * 4;
       let ring: number[][];
-      if (latitudeBounds && longitudeBounds && latitudeBounds.length >= cornerOffset + 4 && longitudeBounds.length >= cornerOffset + 4) {
+      const cornersValid = latitudeBounds && longitudeBounds && latitudeBounds.length >= cornerOffset + 4 && longitudeBounds.length >= cornerOffset + 4
+        && [0, 1, 2, 3].every((corner) => {
+          const cornerLat = latitudeBounds[cornerOffset + corner], cornerLon = longitudeBounds[cornerOffset + corner];
+          return Number.isFinite(cornerLat) && Number.isFinite(cornerLon) && Math.abs(cornerLat) <= 90 && Math.abs(cornerLon) <= 360;
+        });
+      if (cornersValid && latitudeBounds && longitudeBounds) {
         const firstLon = longitudeBounds[cornerOffset];
         ring = Array.from({ length: 4 }, (_, corner) => {
           let x = longitudeBounds[cornerOffset + corner];
@@ -73,8 +78,10 @@ export function detectPmc(input: PmcInput): ProcessingResult {
         const dx = .03, dy = .015;
         ring = [[lon - dx, lat - dy], [lon + dx, lat - dy], [lon + dx, lat + dy], [lon - dx, lat + dy]];
       }
-      ring.push([...ring[0]]);
-      pixelFeatures.push({ type: "Feature", properties: base(i, component.length), geometry: { type: "Polygon", coordinates: [ring] } });
+      if (ring.every(([x, y]) => Number.isFinite(x) && Number.isFinite(y))) {
+        ring.push([...ring[0]]);
+        pixelFeatures.push({ type: "Feature", properties: base(i, component.length), geometry: { type: "Polygon", coordinates: [ring] } });
+      }
     });
     meanResidual /= component.length; meanThreshold /= component.length;
     const properties = {

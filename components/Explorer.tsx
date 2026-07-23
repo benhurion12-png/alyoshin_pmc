@@ -90,7 +90,7 @@ export default function Explorer() {
 
         <section className="main-panel">
           <div className="section-title"><b>02</b><span>ВЕРОЯТНЫЕ ПОЛЯРНЫЕ МЕЗОСФЕРНЫЕ ОБЛАКА</span>{orbit ? <button className="download" onClick={() => download(orbit, "orbit.geojson")}>↓ ORBIT</button> : null}</div>
-          <PmcMap orbit={orbit} pixels={result?.pixels ?? null} clusters={result?.clusters ?? null} />
+          <PmcMap key={String(result?.metadata.processedAt ?? "empty")} orbit={orbit} pixels={result?.pixels ?? null} clusters={result?.clusters ?? null} />
           <div className="map-status quality-legend"><span><i className="cyan" />ОРБИТАЛЬНЫЙ СЛЕД</span><span><i className="quality low" />НИЗКИЙ</span><span><i className="quality medium" />СРЕДНИЙ</span><span><i className="quality high" />ВЫСОКИЙ</span><em>MAPLIBRE · OPENSTREETMAP</em></div>
           {result ? <div className="result-strip">
             <div><b>{result.pixels.features.length}</b><span>пикселей</span></div><div><b>{result.clusters.features.length}</b><span>кластеров</span></div>
