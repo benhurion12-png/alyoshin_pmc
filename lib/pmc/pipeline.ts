@@ -13,23 +13,30 @@ export type PmcInput = {
   latitudeBounds?: Float32Array;
   longitudeBounds?: Float32Array;
   sza: Float32Array;
-  signals: [Float32Array, Float32Array, Float32Array];
+  signals: [Float32Array, Float32Array, Float32Array, Float32Array, Float32Array];
+  qualityMask?: Uint8Array;
   settings: ProcessingSettings;
 };
 
 export function detectPmc(input: PmcInput): ProcessingResult {
-  const { rows, cols, latitude, longitude, latitudeBounds, longitudeBounds, sza, signals, settings } = input;
-  const valid = new Uint8Array(rows * cols);
+  const { rows, cols, latitude, longitude, latitudeBounds, longitudeBounds, sza, signals, qualityMask, settings } = input;
+  const valid = new Uint8Array(rows * cols), backgroundValid = new Uint8Array(rows * cols);
   for (let i = 0; i < valid.length; i++) {
-    valid[i] = Number.isFinite(signals[0][i]) && Number.isFinite(signals[1][i]) && Number.isFinite(signals[2][i])
+    const crossTrack = i % cols;
+    const instrumentValid = (!qualityMask || qualityMask[i] === 1) && crossTrack >= 5 && crossTrack <= cols - 6
+      && Number.isFinite(signals[0][i]) && Number.isFinite(signals[1][i]) && Number.isFinite(signals[2][i])
       && Number.isFinite(latitude[i]) && Number.isFinite(longitude[i]) && Number.isFinite(sza[i])
-      && latitude[i] >= settings.minLatitude && latitude[i] <= settings.maxLatitude && sza[i] >= settings.minSza && sza[i] <= settings.maxSza ? 1 : 0;
+      && latitude[i] <= settings.maxLatitude && sza[i] >= settings.minSza && sza[i] <= settings.maxSza;
+    backgroundValid[i] = instrumentValid && latitude[i] >= 50 ? 1 : 0;
+    valid[i] = instrumentValid && latitude[i] >= settings.minLatitude ? 1 : 0;
   }
-  const residuals = signals.map((signal) => iterativeBackground(sza, signal, valid, rows, cols, settings.maxIterations).residual) as [Float32Array, Float32Array, Float32Array];
+  const residuals = signals.map((signal) => iterativeBackground(sza, signal, backgroundValid, rows, cols, settings.maxIterations).residual) as [Float32Array, Float32Array, Float32Array, Float32Array, Float32Array];
   const threshold = adaptiveThreshold(residuals[0], sza, valid, settings.szaBinSize, settings.noiseMultiplier);
   let mask = new Uint8Array(valid.length);
   for (let i = 0; i < mask.length; i++) {
-    const slope = (residuals[2][i] - residuals[0][i]) / (settings.wavelengths[2] - settings.wavelengths[0]);
+    let sx = 0, sy = 0, sxx = 0, sxy = 0;
+    for (let w = 0; w < settings.wavelengths.length; w++) { const x = settings.wavelengths[w], y = residuals[w][i]; sx += x; sy += y; sxx += x * x; sxy += x * y; }
+    const slope = (settings.wavelengths.length * sxy - sx * sy) / (settings.wavelengths.length * sxx - sx * sx);
     if (valid[i] && residuals[0][i] > threshold[i] && residuals[0][i] > 0 && residuals[1][i] > 0 && residuals[2][i] > 0
       && residuals[0][i] > residuals[2][i] && slope < 0) mask[i] = 1;
   }

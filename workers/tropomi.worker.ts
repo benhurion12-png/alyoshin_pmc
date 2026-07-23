@@ -76,6 +76,10 @@ async function processPmc(fileObject: File, settings: import("@/types/processing
   const latitudeBounds = findDataset(file, (name) => name === "latitude_bounds");
   const longitudeBounds = findDataset(file, (name) => name === "longitude_bounds");
   const sza = findDataset(file, (name) => name === "solar_zenith_angle");
+  const groundPixelQuality = findDataset(file, (name) => name === "ground_pixel_quality");
+  const measurementQuality = findDataset(file, (name) => name === "measurement_quality");
+  const qualityLevel = findDataset(file, (name) => name === "quality_level");
+  const spectralChannelQuality = findDataset(file, (name) => name === "spectral_channel_quality");
   if (!radiance || !wavelength || !latitude || !longitude || !sza) throw new Error("Не найдены radiance, nominal_wavelength, latitude, longitude или solar_zenith_angle.");
   const shape = radiance.shape ?? [];
   const rows = shape.at(-3) ?? 0, cols = shape.at(-2) ?? 0, bands = shape.at(-1) ?? 0;
@@ -91,17 +95,39 @@ async function processPmc(fileObject: File, settings: import("@/types/processing
     }
     return perColumn;
   });
-  const minBand = Math.min(...indices.flatMap((a) => Array.from(a)));
-  const maxBand = Math.max(...indices.flatMap((a) => Array.from(a)));
-  const signals = [new Float32Array(rows * cols), new Float32Array(rows * cols), new Float32Array(rows * cols)] as [Float32Array, Float32Array, Float32Array];
+  const halfSpectralWindow = 24;
+  const minBand = Math.max(0, Math.min(...indices.flatMap((a) => Array.from(a))) - halfSpectralWindow);
+  const maxBand = Math.min(bands - 1, Math.max(...indices.flatMap((a) => Array.from(a))) + halfSpectralWindow);
+  const signals = settings.wavelengths.map(() => new Float32Array(rows * cols)) as [Float32Array, Float32Array, Float32Array, Float32Array, Float32Array];
+  const qualityMask = new Uint8Array(rows * cols);
+  qualityMask.fill(1);
+  const groundQualityValues = groundPixelQuality ? asFloat32(groundPixelQuality.value) : null;
+  const measurementQualityValues = measurementQuality ? asFloat32(measurementQuality.value) : null;
   const chunkRows = 12;
   for (let start = 0; start < rows; start += chunkRows) {
     if (cancelled) throw new DOMException("Cancelled", "AbortError");
     const count = Math.min(chunkRows, rows - start), width = maxBand - minBand + 1;
     const chunk = asFloat32(radiance.slice([[0, 1], [start, start + count], [], [minBand, maxBand + 1]]));
-    for (let r = 0; r < count; r++) for (let col = 0; col < cols; col++) for (let w = 0; w < 3; w++) {
-      const raw = chunk[(r * cols + col) * width + indices[w][col] - minBand];
-      signals[w][(start + r) * cols + col] = Math.abs(raw) < 1e30 ? raw : NaN;
+    const levelChunk = qualityLevel ? asFloat32(qualityLevel.slice([[0, 1], [start, start + count], [], [minBand, maxBand + 1]])) : null;
+    const spectralQualityChunk = spectralChannelQuality ? asFloat32(spectralChannelQuality.slice([[0, 1], [start, start + count], [], [minBand, maxBand + 1]])) : null;
+    for (let r = 0; r < count; r++) for (let col = 0; col < cols; col++) for (let w = 0; w < settings.wavelengths.length; w++) {
+      const selectedBand = indices[w][col];
+      const localIndex = (r * cols + col) * width + selectedBand - minBand;
+      const outputIndex = (start + r) * cols + col;
+      let sum = 0, validChannels = 0;
+      const windowStart = Math.max(minBand, selectedBand - halfSpectralWindow);
+      const windowEnd = Math.min(maxBand, selectedBand + halfSpectralWindow);
+      for (let band = windowStart; band <= windowEnd; band++) {
+        const spectralIndex = (r * cols + col) * width + band - minBand;
+        const raw = chunk[spectralIndex];
+        if (Math.abs(raw) < 1e30 && (!spectralQualityChunk || spectralQualityChunk[spectralIndex] === 0)) { sum += raw; validChannels++; }
+      }
+      signals[w][outputIndex] = validChannels >= 40 ? sum / validChannels : NaN;
+      if ((spectralQualityChunk && spectralQualityChunk[localIndex] !== 0) || (levelChunk && levelChunk[localIndex] < 80)) qualityMask[outputIndex] = 0;
+    }
+    for (let r = 0; r < count; r++) for (let col = 0; col < cols; col++) {
+      const outputIndex = (start + r) * cols + col;
+      if ((groundQualityValues && groundQualityValues[outputIndex] !== 0) || (measurementQualityValues && measurementQualityValues[start + r] !== 0)) qualityMask[outputIndex] = 0;
     }
     send({ type: "PROGRESS", stage: `Чтение radiance · scanline ${start + count}/${rows}`, percent: 10 + Math.round(48 * (start + count) / rows), bytesRead: (start + count) * cols * width * 4 });
   }
@@ -112,7 +138,7 @@ async function processPmc(fileObject: File, settings: import("@/types/processing
     sourceFile: fileObject.name, rows, cols, latitude: lat, longitude: lon,
     latitudeBounds: latitudeBounds ? asFloat32(latitudeBounds.value) : undefined,
     longitudeBounds: longitudeBounds ? asFloat32(longitudeBounds.value) : undefined,
-    sza: solarZenith, signals, settings,
+    sza: solarZenith, signals, qualityMask, settings,
   });
   file.close();
   return result;

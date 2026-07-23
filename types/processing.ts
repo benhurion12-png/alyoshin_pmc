@@ -1,7 +1,7 @@
 import type { OrbitGeoJson } from "./netcdf";
 
 export type ProcessingSettings = {
-  wavelengths: [number, number, number];
+  wavelengths: [number, number, number, number, number];
   minLatitude: number;
   maxLatitude: number;
   minSza: number;
@@ -48,8 +48,8 @@ export type ProcessingResult = {
 };
 
 export const DEFAULT_SETTINGS: ProcessingSettings = {
-  wavelengths: [283, 287, 291.5],
-  minLatitude: 50,
+  wavelengths: [283, 287, 291.5, 295, 298],
+  minLatitude: 70,
   maxLatitude: 90,
   minSza: 0,
   maxSza: 85,
