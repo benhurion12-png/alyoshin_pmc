@@ -127,7 +127,8 @@ async function processPmc(fileObject: File, settings: import("@/types/processing
     }
     for (let r = 0; r < count; r++) for (let col = 0; col < cols; col++) {
       const outputIndex = (start + r) * cols + col;
-      if ((groundQualityValues && groundQualityValues[outputIndex] !== 0) || (measurementQualityValues && measurementQualityValues[start + r] !== 0)) qualityMask[outputIndex] = 0;
+      const groundFlags = groundQualityValues ? groundQualityValues[outputIndex] | 0 : 0;
+      if ((groundFlags & 128) !== 0 || (measurementQualityValues && measurementQualityValues[start + r] !== 0)) qualityMask[outputIndex] = 0;
     }
     send({ type: "PROGRESS", stage: `Чтение radiance · scanline ${start + count}/${rows}`, percent: 10 + Math.round(48 * (start + count) / rows), bytesRead: (start + count) * cols * width * 4 });
   }
