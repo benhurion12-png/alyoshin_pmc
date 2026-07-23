@@ -23,10 +23,11 @@ export type PmcProperties = {
   signalToNoise: number;
   detectionScore: number;
   pixelCount: number;
-  geometryApproximate: true;
+  geometryApproximate: boolean;
+  qualityLevel: "low" | "medium" | "high";
 };
 
-export type PmcPointCollection = GeoJSON.FeatureCollection<GeoJSON.Point, PmcProperties>;
+export type PmcPointCollection = GeoJSON.FeatureCollection<GeoJSON.Polygon, PmcProperties>;
 export type PmcClusterCollection = GeoJSON.FeatureCollection<GeoJSON.Polygon, PmcProperties & {
   clusterId: number;
   meanResidual: number;

@@ -8,4 +8,5 @@
 .result-strip b{font:22px monospace;color:var(--amber)}
 .result-strip span{font:8px monospace;letter-spacing:.12em;color:var(--muted);text-transform:uppercase}
 .result-strip button{margin-left:auto;border:1px solid #2b414f;background:#101d26;color:#9fb1bd;padding:8px;font:8px monospace;cursor:pointer}
+.quality-legend .quality.low{background:#2f80ed}.quality-legend .quality.medium{background:#ffd84d}.quality-legend .quality.high{background:#ef3340}
 @media(max-width:1100px){.result-strip{flex-wrap:wrap}.result-strip button{margin-left:0}}

@@ -23,4 +23,4 @@ export type InspectionResult = {
   durationMs: number;
 };
 
-export type OrbitGeoJson = GeoJSON.FeatureCollection<GeoJSON.Polygon>;
+export type OrbitGeoJson = GeoJSON.FeatureCollection<GeoJSON.Polygon | GeoJSON.MultiPolygon>;

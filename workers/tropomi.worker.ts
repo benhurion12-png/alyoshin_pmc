@@ -73,6 +73,8 @@ async function processPmc(fileObject: File, settings: import("@/types/processing
   const wavelength = findDataset(file, (name) => name === "nominal_wavelength" || name === "wavelength");
   const latitude = findDataset(file, (name, path) => name === "latitude" && !path.includes("bounds"));
   const longitude = findDataset(file, (name, path) => name === "longitude" && !path.includes("bounds"));
+  const latitudeBounds = findDataset(file, (name) => name === "latitude_bounds");
+  const longitudeBounds = findDataset(file, (name) => name === "longitude_bounds");
   const sza = findDataset(file, (name) => name === "solar_zenith_angle");
   if (!radiance || !wavelength || !latitude || !longitude || !sza) throw new Error("Не найдены radiance, nominal_wavelength, latitude, longitude или solar_zenith_angle.");
   const shape = radiance.shape ?? [];
@@ -106,7 +108,12 @@ async function processPmc(fileObject: File, settings: import("@/types/processing
   send({ type: "PROGRESS", stage: "Чтение геолокации и SZA", percent: 62, bytesRead: 0 });
   const lat = asFloat32(latitude.value), lon = asFloat32(longitude.value), solarZenith = asFloat32(sza.value);
   send({ type: "PROGRESS", stage: "Итеративная фоновая модель", percent: 72, bytesRead: 0 });
-  const result = detectPmc({ sourceFile: fileObject.name, rows, cols, latitude: lat, longitude: lon, sza: solarZenith, signals, settings });
+  const result = detectPmc({
+    sourceFile: fileObject.name, rows, cols, latitude: lat, longitude: lon,
+    latitudeBounds: latitudeBounds ? asFloat32(latitudeBounds.value) : undefined,
+    longitudeBounds: longitudeBounds ? asFloat32(longitudeBounds.value) : undefined,
+    sza: solarZenith, signals, settings,
+  });
   file.close();
   return result;
 }

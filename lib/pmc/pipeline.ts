@@ -10,13 +10,15 @@ export type PmcInput = {
   cols: number;
   latitude: Float32Array;
   longitude: Float32Array;
+  latitudeBounds?: Float32Array;
+  longitudeBounds?: Float32Array;
   sza: Float32Array;
   signals: [Float32Array, Float32Array, Float32Array];
   settings: ProcessingSettings;
 };
 
 export function detectPmc(input: PmcInput): ProcessingResult {
-  const { rows, cols, latitude, longitude, sza, signals, settings } = input;
+  const { rows, cols, latitude, longitude, latitudeBounds, longitudeBounds, sza, signals, settings } = input;
   const valid = new Uint8Array(rows * cols);
   for (let i = 0; i < valid.length; i++) {
     const absLat = Math.abs(latitude[i]);
@@ -42,11 +44,13 @@ export function detectPmc(input: PmcInput): ProcessingResult {
   const clusterFeatures: PmcClusterCollection["features"] = [];
   const base = (i: number, count: number) => {
     const snr = residuals[0][i] / Math.max(threshold[i] / settings.noiseMultiplier, 1e-20);
+    const score = Math.max(0, Math.min(1, 0.45 * Math.min(snr / 6, 1) + 0.35 * Math.min(count / 12, 1) + 0.2 * Math.min((residuals[0][i] - residuals[2][i]) / Math.max(residuals[0][i], 1e-20), 1)));
     return {
       sourceFile: input.sourceFile, wavelengthNm: settings.wavelengths[0], signalMode: "relative-radiance" as const,
       residual: residuals[0][i], threshold: threshold[i], signalToNoise: snr,
-      detectionScore: Math.max(0, Math.min(1, 0.45 * Math.min(snr / 6, 1) + 0.35 * Math.min(count / 12, 1) + 0.2 * Math.min((residuals[0][i] - residuals[2][i]) / Math.max(residuals[0][i], 1e-20), 1))),
-      pixelCount: count, geometryApproximate: true as const,
+      detectionScore: score,
+      pixelCount: count, geometryApproximate: !(latitudeBounds && longitudeBounds),
+      qualityLevel: score >= .72 ? "high" as const : score >= .45 ? "medium" as const : "low" as const,
     };
   };
   for (const component of components) {
@@ -56,7 +60,22 @@ export function detectPmc(input: PmcInput): ProcessingResult {
       const lon = longitude[i], lat = latitude[i]; minLon = Math.min(minLon, lon); maxLon = Math.max(maxLon, lon); minLat = Math.min(minLat, lat); maxLat = Math.max(maxLat, lat);
       sumLon += lon; sumLat += lat; values[j] = residuals[0][i]; meanResidual += residuals[0][i]; meanThreshold += threshold[i];
       if (residuals[0][i] > maxResidual) { maxResidual = residuals[0][i]; representative = i; }
-      pixelFeatures.push({ type: "Feature", properties: base(i, component.length), geometry: { type: "Point", coordinates: [lon, lat] } });
+      const cornerOffset = i * 4;
+      let ring: number[][];
+      if (latitudeBounds && longitudeBounds && latitudeBounds.length >= cornerOffset + 4 && longitudeBounds.length >= cornerOffset + 4) {
+        const firstLon = longitudeBounds[cornerOffset];
+        ring = Array.from({ length: 4 }, (_, corner) => {
+          let x = longitudeBounds[cornerOffset + corner];
+          while (x - firstLon > 180) x -= 360;
+          while (x - firstLon < -180) x += 360;
+          return [x, latitudeBounds[cornerOffset + corner]];
+        });
+      } else {
+        const dx = .03, dy = .015;
+        ring = [[lon - dx, lat - dy], [lon + dx, lat - dy], [lon + dx, lat + dy], [lon - dx, lat + dy]];
+      }
+      ring.push([...ring[0]]);
+      pixelFeatures.push({ type: "Feature", properties: base(i, component.length), geometry: { type: "Polygon", coordinates: [ring] } });
     });
     meanResidual /= component.length; meanThreshold /= component.length;
     const properties = {
