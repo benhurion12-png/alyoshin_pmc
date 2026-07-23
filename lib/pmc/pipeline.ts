@@ -21,10 +21,9 @@ export function detectPmc(input: PmcInput): ProcessingResult {
   const { rows, cols, latitude, longitude, latitudeBounds, longitudeBounds, sza, signals, settings } = input;
   const valid = new Uint8Array(rows * cols);
   for (let i = 0; i < valid.length; i++) {
-    const absLat = Math.abs(latitude[i]);
     valid[i] = Number.isFinite(signals[0][i]) && Number.isFinite(signals[1][i]) && Number.isFinite(signals[2][i])
       && Number.isFinite(latitude[i]) && Number.isFinite(longitude[i]) && Number.isFinite(sza[i])
-      && absLat >= settings.minLatitude && absLat <= settings.maxLatitude && sza[i] >= settings.minSza && sza[i] <= settings.maxSza ? 1 : 0;
+      && latitude[i] >= settings.minLatitude && latitude[i] <= settings.maxLatitude && sza[i] >= settings.minSza && sza[i] <= settings.maxSza ? 1 : 0;
   }
   const residuals = signals.map((signal) => iterativeBackground(sza, signal, valid, rows, cols, settings.maxIterations).residual) as [Float32Array, Float32Array, Float32Array];
   const threshold = adaptiveThreshold(residuals[0], sza, valid, settings.szaBinSize, settings.noiseMultiplier);
@@ -93,7 +92,10 @@ export function detectPmc(input: PmcInput): ProcessingResult {
     orbit: buildOrbitFootprint(latitude, longitude, [rows, cols]),
     pixels: { type: "FeatureCollection", features: pixelFeatures },
     clusters: { type: "FeatureCollection", features: clusterFeatures },
-    warnings: ["IR_UVN не загружен: используется экспериментальный residual radiance, а не residual albedo.", "Геометрия пикселей построена по центрам; площадь кластеров приблизительна."],
+    warnings: [
+      "IR_UVN не загружен: используется экспериментальный residual radiance, а не residual albedo.",
+      latitudeBounds && longitudeBounds ? "PMC отображаются по фактическим corner-координатам пикселей; площадь кластеров приблизительна." : "Corner-координаты отсутствуют: геометрия пикселей приблизительна.",
+    ],
     metadata: { algorithmVersion: "0.2.0", articleMethod: "approximated", settings, selectedWavelengthsNm: settings.wavelengths, signalMode: "relative-radiance", processedAt: new Date().toISOString() },
   };
 }

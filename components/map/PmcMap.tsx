@@ -37,6 +37,7 @@ export default function PmcMap({ orbit, pixels, clusters }: { orbit: OrbitGeoJso
     const instance = map.current;
     if (!instance || !orbit) return;
     const apply = () => {
+      instance.setRenderWorldCopies(false);
       const source = instance.getSource("orbit-footprint") as GeoJSONSource | undefined;
       if (source) source.setData(orbit);
       else {
@@ -44,6 +45,7 @@ export default function PmcMap({ orbit, pixels, clusters }: { orbit: OrbitGeoJso
         instance.addLayer({ id: "orbit-fill", type: "fill", source: "orbit-footprint", paint: { "fill-color": "#8bf3ff", "fill-opacity": 0.045 } });
         instance.addLayer({ id: "orbit-outline", type: "line", source: "orbit-footprint", paint: { "line-color": "#8bf3ff", "line-width": 2 } });
       }
+      instance.setPaintProperty("orbit-fill", "fill-opacity", 0.025);
       const coordinates = orbit.features[0]?.geometry.coordinates[0] ?? [];
       if (coordinates.length) {
         const bounds = coordinates.reduce((b, c) => b.extend(c as [number, number]), new maplibregl.LngLatBounds(coordinates[0] as [number, number], coordinates[0] as [number, number]));
@@ -57,17 +59,12 @@ export default function PmcMap({ orbit, pixels, clusters }: { orbit: OrbitGeoJso
     const instance = map.current;
     if (!instance || !pixels || !clusters) return;
     const apply = () => {
-      const update = (id: string, data: GeoJSON.FeatureCollection) => {
-        const source = instance.getSource(id) as GeoJSONSource | undefined;
-        if (source) source.setData(data); else instance.addSource(id, { type: "geojson", data });
-      };
-      update("pmc-pixels", pixels); update("pmc-clusters", clusters);
-      if (!instance.getLayer("pmc-cluster-fill")) instance.addLayer({
-        id: "pmc-cluster-fill", type: "fill", source: "pmc-clusters",
-        paint: { "fill-color": "#ffffff", "fill-opacity": 0 },
-      });
-      if (!instance.getLayer("pmc-cluster-outline")) instance.addLayer({ id: "pmc-cluster-outline", type: "line", source: "pmc-clusters", paint: { "line-color": "#ffffff", "line-width": 1, "line-opacity": .28, "line-dasharray": [2, 2] } });
-      if (!instance.getLayer("pmc-pixels")) instance.addLayer({
+      instance.setRenderWorldCopies(false);
+      for (const layer of ["pmc-pixels", "pmc-cluster-outline", "pmc-cluster-fill"]) if (instance.getLayer(layer)) instance.removeLayer(layer);
+      for (const source of ["pmc-pixels", "pmc-clusters"]) if (instance.getSource(source)) instance.removeSource(source);
+      instance.addSource("pmc-pixels", { type: "geojson", data: pixels });
+      instance.addSource("pmc-clusters", { type: "geojson", data: clusters });
+      instance.addLayer({
         id: "pmc-pixels", type: "fill", source: "pmc-pixels",
         paint: {
           "fill-color": ["match", ["get", "qualityLevel"], "high", "#ef3340", "medium", "#ffd84d", "#2f80ed"],
@@ -79,6 +76,7 @@ export default function PmcMap({ orbit, pixels, clusters }: { orbit: OrbitGeoJso
         const p = event.features?.[0]?.properties; if (!p) return;
         new maplibregl.Popup().setLngLat(event.lngLat).setHTML(`<strong>Вероятный PMC · ${String(p.qualityLevel).toUpperCase()}</strong><br>Residual: ${Number(p.residual).toExponential(3)}<br>Порог: ${Number(p.threshold).toExponential(3)}<br>S/N: ${Number(p.signalToNoise).toFixed(2)}<br>Detection score: ${Number(p.detectionScore).toFixed(2)}<br>Пикселей в кластере: ${p.pixelCount}`).addTo(instance);
       };
+      instance.off("click", "pmc-pixels", popup);
       instance.on("click", "pmc-pixels", popup);
       if (pixels.features.length) {
         const coordinates = pixels.features.flatMap((feature) => feature.geometry.coordinates[0]);

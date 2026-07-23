@@ -6,6 +6,7 @@
 .result-strip{display:flex;align-items:center;gap:10px;margin-top:12px;border:1px solid var(--line);padding:10px;background:#09131c}
 .result-strip div{display:flex;flex-direction:column;min-width:70px}
 .result-strip b{font:22px monospace;color:var(--amber)}
+.result-strip b.blue-number{color:#2f80ed}.result-strip b.yellow-number{color:#ffd84d}.result-strip b.red-number{color:#ef3340}
 .result-strip span{font:8px monospace;letter-spacing:.12em;color:var(--muted);text-transform:uppercase}
 .result-strip button{margin-left:auto;border:1px solid #2b414f;background:#101d26;color:#9fb1bd;padding:8px;font:8px monospace;cursor:pointer}
 .quality-legend .quality.low{background:#2f80ed}.quality-legend .quality.medium{background:#ffd84d}.quality-legend .quality.high{background:#ef3340}
