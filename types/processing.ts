@@ -17,7 +17,7 @@ export type ProcessingSettings = {
 export type PmcProperties = {
   sourceFile: string;
   wavelengthNm: number;
-  signalMode: "relative-radiance";
+  signalMode: "relative-radiance" | "albedo";
   residual: number;
   threshold: number;
   signalToNoise: number;
@@ -49,14 +49,14 @@ export type ProcessingResult = {
 
 export const DEFAULT_SETTINGS: ProcessingSettings = {
   wavelengths: [283, 287, 291.5, 295, 298],
-  minLatitude: 70,
+  minLatitude: 50,
   maxLatitude: 90,
   minSza: 0,
   maxSza: 85,
   szaBinSize: 0.25,
   noiseMultiplier: 2.2,
-  minimumClusterSize: 3,
-  morphologicalClosing: true,
+  minimumClusterSize: 1,
+  morphologicalClosing: false,
   morphologicalOpening: false,
   maxIterations: 5,
 };

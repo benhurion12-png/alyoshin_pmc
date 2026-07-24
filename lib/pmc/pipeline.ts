@@ -15,6 +15,7 @@ export type PmcInput = {
   sza: Float32Array;
   signals: [Float32Array, Float32Array, Float32Array, Float32Array, Float32Array];
   qualityMask?: Uint8Array;
+  signalMode?: "relative-radiance" | "albedo";
   settings: ProcessingSettings;
 };
 
@@ -52,7 +53,7 @@ export function detectPmc(input: PmcInput): ProcessingResult {
     const snr = residuals[0][i] / Math.max(threshold[i] / settings.noiseMultiplier, 1e-20);
     const score = Math.max(0, Math.min(1, 0.45 * Math.min(snr / 6, 1) + 0.35 * Math.min(count / 12, 1) + 0.2 * Math.min((residuals[0][i] - residuals[2][i]) / Math.max(residuals[0][i], 1e-20), 1)));
     return {
-      sourceFile: input.sourceFile, wavelengthNm: settings.wavelengths[0], signalMode: "relative-radiance" as const,
+      sourceFile: input.sourceFile, wavelengthNm: settings.wavelengths[0], signalMode: input.signalMode ?? "relative-radiance",
       residual: residuals[0][i], threshold: threshold[i], signalToNoise: snr,
       detectionScore: score,
       pixelCount: count, geometryApproximate: !(latitudeBounds && longitudeBounds),
@@ -107,9 +108,11 @@ export function detectPmc(input: PmcInput): ProcessingResult {
     pixels: { type: "FeatureCollection", features: pixelFeatures },
     clusters: { type: "FeatureCollection", features: clusterFeatures },
     warnings: [
-      "IR_UVN не загружен: используется экспериментальный residual radiance, а не residual albedo.",
+      input.signalMode === "albedo"
+        ? "Использован IR_UVN: обнаружение выполнено по residual albedo."
+        : "IR_UVN не загружен: используется экспериментальный residual radiance, а не residual albedo.",
       latitudeBounds && longitudeBounds ? "PMC отображаются по фактическим corner-координатам пикселей; площадь кластеров приблизительна." : "Corner-координаты отсутствуют: геометрия пикселей приблизительна.",
     ],
-    metadata: { algorithmVersion: "0.2.0", sourceFile: input.sourceFile, articleMethod: "approximated", settings, selectedWavelengthsNm: settings.wavelengths, signalMode: "relative-radiance", processedAt: new Date().toISOString() },
+    metadata: { algorithmVersion: "0.3.0", sourceFile: input.sourceFile, articleMethod: input.signalMode === "albedo" ? "albedo-partial" : "approximated", settings, selectedWavelengthsNm: settings.wavelengths, signalMode: input.signalMode ?? "relative-radiance", processedAt: new Date().toISOString() },
   };
 }

@@ -4,7 +4,7 @@ import type { ProcessingResult, ProcessingSettings } from "./processing";
 export type WorkerRequest =
   | { type: "INSPECT"; file: File }
   | { type: "EXTRACT_ORBIT"; file: File; latitudePath: string; longitudePath: string }
-  | { type: "PROCESS"; radianceFile: File; settings: ProcessingSettings }
+  | { type: "PROCESS"; radianceFile: File; irradianceFile?: File; settings: ProcessingSettings }
   | { type: "CANCEL" };
 
 export type WorkerResponse =

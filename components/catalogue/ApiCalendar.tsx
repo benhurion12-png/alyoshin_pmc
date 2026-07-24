@@ -34,10 +34,18 @@ export default function ApiCalendar() {
       };
       const irradianceStart = new Date(`${date}T00:00:00.000Z`); irradianceStart.setUTCDate(irradianceStart.getUTCDate() - 2);
       const irradianceEnd = new Date(`${date}T00:00:00.000Z`); irradianceEnd.setUTCDate(irradianceEnd.getUTCDate() + 3);
-      const [radiance, irradianceCandidates] = await Promise.all([
-        load("S5P_OFFL_L1B_RA_BD1_"),
+      const radianceStart = new Date(`${date}T00:00:00.000Z`); radianceStart.setUTCHours(radianceStart.getUTCHours() - 2);
+      const radianceEnd = new Date(end); radianceEnd.setUTCHours(radianceEnd.getUTCHours() + 2);
+      const [radianceCandidates, irradianceCandidates] = await Promise.all([
+        load("S5P_OFFL_L1B_RA_BD1_", radianceStart.toISOString(), radianceEnd.toISOString()),
         load("S5P_OFFL_L1B_IR_UVN_", irradianceStart.toISOString(), irradianceEnd.toISOString()),
       ]);
+      const dayStartTime = new Date(`${date}T00:00:00.000Z`).getTime();
+      const dayEndTime = end.getTime();
+      const radiance = radianceCandidates.filter((product) =>
+        new Date(product.ContentDate.Start).getTime() < dayEndTime
+        && new Date(product.ContentDate.End).getTime() > dayStartTime,
+      );
       const targetTime = new Date(`${date}T12:00:00.000Z`).getTime();
       const irradiance = irradianceCandidates
         .sort((a, b) => Math.abs(new Date(a.ContentDate.Start).getTime() - targetTime) - Math.abs(new Date(b.ContentDate.Start).getTime() - targetTime))

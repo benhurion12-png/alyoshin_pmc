@@ -11,13 +11,58 @@ import { DEFAULT_SETTINGS, type ProcessingResult, type ProcessingSettings } from
 const PmcMap = dynamic(() => import("@/components/map/PmcMap"), { ssr: false });
 const PolarMap = dynamic(() => import("@/components/map/PolarMap"), { ssr: false });
 const formatBytes = (n: number) => new Intl.NumberFormat("ru", { maximumFractionDigits: 1 }).format(n / 1024 / 1024) + " МБ";
+const EARTH_RADIUS_KM = 6371;
+const DAILY_GRID_KM = 7.5;
+
+const projectNorth = ([longitude, latitude]: [number, number]) => {
+  const lambda = longitude * Math.PI / 180;
+  const rho = 2 * EARTH_RADIUS_KM * Math.tan(Math.PI / 4 - latitude * Math.PI / 360);
+  return [rho * Math.sin(lambda), -rho * Math.cos(lambda)] as const;
+};
+
+const unprojectNorth = (x: number, y: number) => {
+  const rho = Math.hypot(x, y);
+  const latitude = (Math.PI / 2 - 2 * Math.atan(rho / (2 * EARTH_RADIUS_KM))) * 180 / Math.PI;
+  const longitude = Math.atan2(x, -y) * 180 / Math.PI;
+  return [longitude, latitude] as [number, number];
+};
+
+const dailyGrid = (features: ProcessingResult["pixels"]["features"]) => {
+  const brightest = new Map<string, { feature: ProcessingResult["pixels"]["features"][number]; x: number; y: number }>();
+  for (const feature of features) {
+    const ring = feature.geometry.coordinates[0];
+    if (!ring?.length) continue;
+    const longitude = ring.slice(0, -1).reduce((sum, point) => sum + point[0], 0) / Math.max(1, ring.length - 1);
+    const latitude = ring.slice(0, -1).reduce((sum, point) => sum + point[1], 0) / Math.max(1, ring.length - 1);
+    const [x, y] = projectNorth([longitude, latitude]);
+    const gridX = Math.round(x / DAILY_GRID_KM), gridY = Math.round(y / DAILY_GRID_KM);
+    const key = `${gridX}:${gridY}`;
+    const current = brightest.get(key);
+    if (!current || feature.properties.residual > current.feature.properties.residual) {
+      brightest.set(key, { feature, x: gridX * DAILY_GRID_KM, y: gridY * DAILY_GRID_KM });
+    }
+  }
+  return [...brightest.values()].map(({ feature, x, y }) => ({
+    ...feature,
+    geometry: {
+      type: "Polygon" as const,
+      coordinates: [[
+        unprojectNorth(x - DAILY_GRID_KM / 2, y - DAILY_GRID_KM / 2),
+        unprojectNorth(x + DAILY_GRID_KM / 2, y - DAILY_GRID_KM / 2),
+        unprojectNorth(x + DAILY_GRID_KM / 2, y + DAILY_GRID_KM / 2),
+        unprojectNorth(x - DAILY_GRID_KM / 2, y + DAILY_GRID_KM / 2),
+        unprojectNorth(x - DAILY_GRID_KM / 2, y - DAILY_GRID_KM / 2),
+      ]],
+    },
+  }));
+};
 
 const mergeProcessingResult = (current: ProcessingResult | null, next: ProcessingResult): ProcessingResult => {
-  if (!current) return { ...next, metadata: { ...next.metadata, orbitCount: 1, sourceFiles: [next.metadata.sourceFile].filter(Boolean) } };
+  if (!current) return { ...next, pixels: { ...next.pixels, features: dailyGrid(next.pixels.features) }, metadata: { ...next.metadata, orbitCount: 1, sourceFiles: [next.metadata.sourceFile].filter(Boolean), dailyGridKm: DAILY_GRID_KM } };
   const clusterOffset = current.clusters.features.length;
   return {
     orbit: { type: "FeatureCollection", features: [...current.orbit.features, ...next.orbit.features] },
-    pixels: { type: "FeatureCollection", features: [...current.pixels.features, ...next.pixels.features] },
+    pixels: { type: "FeatureCollection", features: dailyGrid([...current.pixels.features, ...next.pixels.features]) },
     clusters: {
       type: "FeatureCollection",
       features: [...current.clusters.features, ...next.clusters.features.map((feature) => ({
@@ -32,12 +77,14 @@ const mergeProcessingResult = (current: ProcessingResult | null, next: Processin
       orbitCount: Number(current.metadata.orbitCount ?? 1) + 1,
       sourceFiles: [...(Array.isArray(current.metadata.sourceFiles) ? current.metadata.sourceFiles : []), next.metadata.sourceFile].filter(Boolean),
       processedAt: new Date().toISOString(),
+      dailyGridKm: DAILY_GRID_KM,
     },
   };
 };
 
 export default function Explorer() {
   const [files, setFiles] = useState<File[]>([]);
+  const [irradianceFile, setIrradianceFile] = useState<File | null>(null);
   const file = files[0] ?? null;
   const [inspection, setInspection] = useState<InspectionResult | null>(null);
   const [orbit, setOrbit] = useState<OrbitGeoJson | null>(null);
@@ -49,7 +96,7 @@ export default function Explorer() {
   const [error, setError] = useState("");
   const worker = useRef<Worker | null>(null);
   const input = useRef<HTMLInputElement>(null);
-  const batch = useRef<{ files: File[]; index: number; aggregate: ProcessingResult | null; settings: ProcessingSettings } | null>(null);
+  const batch = useRef<{ files: File[]; irradianceFile: File | null; index: number; aggregate: ProcessingResult | null; settings: ProcessingSettings } | null>(null);
 
   useEffect(() => {
     worker.current = new Worker(new URL("../workers/tropomi.worker.ts", import.meta.url), { type: "module" });
@@ -74,7 +121,7 @@ export default function Explorer() {
         if (activeBatch.index < activeBatch.files.length) {
           const next = activeBatch.files[activeBatch.index];
           setProgress({ stage: `Орбита ${activeBatch.index + 1}/${activeBatch.files.length} · ${next.name}`, percent: Math.round(activeBatch.index / activeBatch.files.length * 100) });
-          worker.current?.postMessage({ type: "PROCESS", radianceFile: next, settings: activeBatch.settings });
+          worker.current?.postMessage({ type: "PROCESS", radianceFile: next, irradianceFile: activeBatch.irradianceFile ?? undefined, settings: activeBatch.settings });
         } else {
           const complete = activeBatch.aggregate;
           batch.current = null;
@@ -92,9 +139,10 @@ export default function Explorer() {
   const lon = useMemo(() => inspection?.candidates.find((c) => c.semanticType === "longitude"), [inspection]);
   const choose = (next: File[]) => {
     const radiance = next.filter((item) => item.name.toLowerCase().endsWith(".nc") && item.name.includes("_RA_BD1_"));
+    const irradiance = next.find((item) => item.name.toLowerCase().endsWith(".nc") && item.name.includes("_IR_UVN_")) ?? null;
     if (!radiance.length) { setError("Выберите один или несколько файлов OFFL L1B_RA_BD1 с расширением .nc"); return; }
     radiance.sort((a, b) => a.name.localeCompare(b.name));
-    setFiles(radiance); setInspection(null); setOrbit(null); setResult(null); setError("");
+    setFiles(radiance); setIrradianceFile(irradiance); setInspection(null); setOrbit(null); setResult(null); setError("");
     setProgress({ stage: `Выбрано орбит: ${radiance.length}`, percent: 0 });
   };
   const inspect = () => { if (file) { setBusy(true); setError(""); worker.current?.postMessage({ type: "INSPECT", file }); } };
@@ -102,9 +150,9 @@ export default function Explorer() {
   const process = () => {
     if (!files.length) return;
     setBusy(true); setError(""); setResult(null); setOrbit(null);
-    batch.current = { files, index: 0, aggregate: null, settings };
+    batch.current = { files, irradianceFile, index: 0, aggregate: null, settings };
     setProgress({ stage: `Орбита 1/${files.length} · ${files[0].name}`, percent: 0 });
-    worker.current?.postMessage({ type: "PROCESS", radianceFile: files[0], settings });
+    worker.current?.postMessage({ type: "PROCESS", radianceFile: files[0], irradianceFile: irradianceFile ?? undefined, settings });
   };
   const download = (value: unknown, name: string) => {
     if (!value) return;
@@ -128,7 +176,7 @@ export default function Explorer() {
           <div className="dropzone" onDragOver={(e) => e.preventDefault()} onDrop={drop} onClick={() => input.current?.click()}>
             <input ref={input} type="file" accept=".nc" multiple hidden onChange={(e: ChangeEvent<HTMLInputElement>) => choose(Array.from(e.target.files ?? []))} />
             <div className="orbit-icon">◎</div>
-            {file ? <><strong>{files.length === 1 ? file.name : `${files.length} орбит RA_BD1`}</strong><small>{formatBytes(files.reduce((sum, item) => sum + item.size, 0))} · локальный File API</small></> : <><strong>Перетащите все RA_BD1 .nc</strong><small>или нажмите и выберите несколько файлов</small></>}
+            {file ? <><strong>{files.length === 1 ? file.name : `${files.length} орбит RA_BD1`}</strong><small>{formatBytes(files.reduce((sum, item) => sum + item.size, 0))} · {irradianceFile ? `IR_UVN: ${irradianceFile.name}` : "IR_UVN не выбран"}</small></> : <><strong>Перетащите RA_BD1 и IR_UVN</strong><small>выберите все .nc выбранного дня одним действием</small></>}
           </div>
           {!file ? <ApiCalendar /> : null}
           <div className="actions">

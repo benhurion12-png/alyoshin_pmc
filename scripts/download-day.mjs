@@ -103,14 +103,22 @@ async function download(product, position, total) {
 }
 
 try {
+  const radianceStart = new Date(dayStart);
+  radianceStart.setUTCHours(radianceStart.getUTCHours() - 2);
+  const radianceEnd = new Date(dayEnd);
+  radianceEnd.setUTCHours(radianceEnd.getUTCHours() + 2);
   const irradianceStart = new Date(`${date}T00:00:00.000Z`);
   irradianceStart.setUTCDate(irradianceStart.getUTCDate() - 2);
   const irradianceEnd = new Date(`${date}T00:00:00.000Z`);
   irradianceEnd.setUTCDate(irradianceEnd.getUTCDate() + 3);
-  const [radiance, irradianceCandidates] = await Promise.all([
-    searchProducts("S5P_OFFL_L1B_RA_BD1_"),
+  const [radianceCandidates, irradianceCandidates] = await Promise.all([
+    searchProducts("S5P_OFFL_L1B_RA_BD1_", radianceStart.toISOString(), radianceEnd.toISOString()),
     searchProducts("S5P_OFFL_L1B_IR_UVN_", irradianceStart.toISOString(), irradianceEnd.toISOString()),
   ]);
+  const radiance = radianceCandidates.filter((product) =>
+    new Date(product.ContentDate.Start) < dayEnd
+    && new Date(product.ContentDate.End) > new Date(dayStart),
+  );
   const targetTime = new Date(`${date}T12:00:00.000Z`).getTime();
   const irradiance = irradianceCandidates
     .sort((a, b) => Math.abs(new Date(a.ContentDate.Start).getTime() - targetTime) - Math.abs(new Date(b.ContentDate.Start).getTime() - targetTime))

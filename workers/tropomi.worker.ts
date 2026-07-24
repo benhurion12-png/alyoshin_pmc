@@ -3,6 +3,7 @@ import h5wasm, { Dataset, Group } from "h5wasm";
 import { buildOrbitFootprint } from "@/lib/geo/orbit-geojson";
 import { discoverVariables } from "@/lib/netcdf/variable-discovery";
 import { detectPmc } from "@/lib/pmc/pipeline";
+import { spatialBin } from "@/lib/pmc/spatial-binning";
 import type { DatasetNode } from "@/types/netcdf";
 import type { WorkerRequest, WorkerResponse } from "@/types/worker";
 
@@ -67,7 +68,52 @@ const asFloat32 = (value: unknown) => {
   return value instanceof Float32Array ? value : Float32Array.from(value as unknown as ArrayLike<number>);
 };
 
-async function processPmc(fileObject: File, settings: import("@/types/processing").ProcessingSettings) {
+type IrradianceSpectrum = {
+  columns: number;
+  signals: [Float32Array, Float32Array, Float32Array, Float32Array, Float32Array];
+};
+
+async function loadIrradiance(fileObject: File | undefined, settings: import("@/types/processing").ProcessingSettings): Promise<IrradianceSpectrum | null> {
+  if (!fileObject) return null;
+  const file = await open(fileObject);
+  try {
+    const irradiance = findDataset(file, (name) => name === "irradiance");
+    const wavelength = findDataset(file, (name) => name === "nominal_wavelength" || name === "wavelength");
+    if (!irradiance || !wavelength) throw new Error("В IR_UVN не найдены irradiance и nominal_wavelength.");
+    const shape = irradiance.shape ?? [];
+    const bands = shape.at(-1) ?? 0;
+    const columns = shape.length >= 3 ? (shape.at(-2) ?? 1) : 1;
+    if (!bands) throw new Error("Неожиданная форма irradiance в IR_UVN.");
+    const irradianceValues = asFloat32(irradiance.value);
+    const wavelengthValues = asFloat32(wavelength.value);
+    const output = settings.wavelengths.map(() => new Float32Array(columns)) as IrradianceSpectrum["signals"];
+    const spectralOffset = irradianceValues.length - columns * bands;
+    const wavelengthOffset = Math.max(0, wavelengthValues.length - columns * bands);
+    for (let col = 0; col < columns; col++) {
+      for (let w = 0; w < settings.wavelengths.length; w++) {
+        let selectedBand = 0, distance = Infinity;
+        for (let band = 0; band < bands; band++) {
+          const wavelengthIndex = wavelengthValues.length >= columns * bands ? wavelengthOffset + col * bands + band : band;
+          const nextDistance = Math.abs(wavelengthValues[wavelengthIndex] - settings.wavelengths[w]);
+          if (nextDistance < distance) { distance = nextDistance; selectedBand = band; }
+        }
+        let sum = 0, count = 0;
+        for (let band = Math.max(0, selectedBand - 24); band <= Math.min(bands - 1, selectedBand + 24); band++) {
+          const value = irradianceValues[spectralOffset + col * bands + band];
+          if (Number.isFinite(value) && value > 0 && Math.abs(value) < 1e30) { sum += value; count++; }
+        }
+        output[w][col] = count >= 40 ? sum / count : NaN;
+      }
+    }
+    return { columns, signals: output };
+  } finally {
+    file.close();
+  }
+}
+
+async function processPmc(fileObject: File, irradianceFile: File | undefined, settings: import("@/types/processing").ProcessingSettings) {
+  send({ type: "PROGRESS", stage: irradianceFile ? "Чтение солнечного спектра IR_UVN" : "IR_UVN не выбран", percent: 4, bytesRead: 0 });
+  const solar = await loadIrradiance(irradianceFile, settings);
   const file = await open(fileObject);
   const radiance = findDataset(file, (name) => name === "radiance");
   const wavelength = findDataset(file, (name) => name === "nominal_wavelength" || name === "wavelength");
@@ -122,7 +168,12 @@ async function processPmc(fileObject: File, settings: import("@/types/processing
         const raw = chunk[spectralIndex];
         if (Math.abs(raw) < 1e30 && (!spectralQualityChunk || spectralQualityChunk[spectralIndex] === 0)) { sum += raw; validChannels++; }
       }
-      signals[w][outputIndex] = validChannels >= 40 ? sum / validChannels : NaN;
+      const smoothedRadiance = validChannels >= 40 ? sum / validChannels : NaN;
+      const solarColumn = solar ? Math.min(solar.columns - 1, Math.round(col * (solar.columns - 1) / Math.max(1, cols - 1))) : 0;
+      const denominator = solar?.signals[w][solarColumn];
+      signals[w][outputIndex] = solar && denominator && Number.isFinite(denominator)
+        ? smoothedRadiance / denominator
+        : smoothedRadiance;
       if ((spectralQualityChunk && spectralQualityChunk[localIndex] !== 0) || (levelChunk && levelChunk[localIndex] < 80)) qualityMask[outputIndex] = 0;
     }
     for (let r = 0; r < count; r++) for (let col = 0; col < cols; col++) {
@@ -134,12 +185,17 @@ async function processPmc(fileObject: File, settings: import("@/types/processing
   }
   send({ type: "PROGRESS", stage: "Чтение геолокации и SZA", percent: 62, bytesRead: 0 });
   const lat = asFloat32(latitude.value), lon = asFloat32(longitude.value), solarZenith = asFloat32(sza.value);
-  send({ type: "PROGRESS", stage: "Итеративная фоновая модель", percent: 72, bytesRead: 0 });
-  const result = detectPmc({
-    sourceFile: fileObject.name, rows, cols, latitude: lat, longitude: lon,
+  send({ type: "PROGRESS", stage: "Площадь-взвешенное биннингование 2×2 / 2×3", percent: 68, bytesRead: 0 });
+  const binned = spatialBin({
+    rows, cols, latitude: lat, longitude: lon,
     latitudeBounds: latitudeBounds ? asFloat32(latitudeBounds.value) : undefined,
     longitudeBounds: longitudeBounds ? asFloat32(longitudeBounds.value) : undefined,
-    sza: solarZenith, signals, qualityMask, settings,
+    sza: solarZenith, signals, qualityMask,
+  });
+  send({ type: "PROGRESS", stage: "Итеративная фоновая модель", percent: 72, bytesRead: 0 });
+  const result = detectPmc({
+    sourceFile: fileObject.name, ...binned,
+    signalMode: solar ? "albedo" : "relative-radiance", settings,
   });
   file.close();
   return result;
@@ -172,7 +228,7 @@ scope.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       file.close();
       send({ type: "ORBIT_COMPLETE", orbit });
     } else if (event.data.type === "PROCESS") {
-      const result = await processPmc(event.data.radianceFile, event.data.settings);
+      const result = await processPmc(event.data.radianceFile, event.data.irradianceFile, event.data.settings);
       send({ type: "PROGRESS", stage: "GeoJSON и статистика кластеров", percent: 96, bytesRead: 0 });
       send({ type: "PROCESSING_COMPLETE", result });
     }
