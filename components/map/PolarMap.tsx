@@ -74,7 +74,7 @@ export default function PolarMap({ field, singleOrbit = false }: { field: Residu
         {fieldPaths.map((item, index) => <path key={`field-${index}`} d={item.d} fill={color(item.value)} stroke="none" opacity=".88" />)}
         {pole ? <circle cx={pole[0]} cy={pole[1]} r="3" fill="#ffffff" /> : null}
         <text x="28" y="38" fill="#78e8ef" fontFamily="monospace" fontSize="15" letterSpacing="3">NORTH POLAR STEREOGRAPHIC · PMC</text>
-        <text x="28" y={height - 25} fill="#8299a6" fontFamily="monospace" fontSize="11">{singleOrbit ? "70°N–90°N · NATIVE 2×2 / 2×3 BINS" : "50°N–90°N · DAILY 7.5 KM GRID"}</text>
+        <text x="28" y={height - 25} fill="#8299a6" fontFamily="monospace" fontSize="11">{singleOrbit ? "70°N–90°N · NATIVE 2×2 / 2×3 BINS" : "50°N–90°N · DAILY 50 KM GRID · FIGURE 10"}</text>
       </svg>
       <div className="map-export"><button onClick={() => download("png")}>↓ PNG</button><button onClick={() => download("svg")}>↓ SVG</button></div>
     </div>

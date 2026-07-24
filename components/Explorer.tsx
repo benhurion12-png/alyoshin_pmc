@@ -12,7 +12,10 @@ const PmcMap = dynamic(() => import("@/components/map/PmcMap"), { ssr: false });
 const PolarMap = dynamic(() => import("@/components/map/PolarMap"), { ssr: false });
 const formatBytes = (n: number) => new Intl.NumberFormat("ru", { maximumFractionDigits: 1 }).format(n / 1024 / 1024) + " МБ";
 const EARTH_RADIUS_KM = 6371;
-const DAILY_GRID_KM = 7.5;
+// Figure 10 uses a common 50 km × 50 km comparison grid. TROPOMI colour
+// values are normalized by a fixed 30 × 10⁻⁶ sr⁻¹ reference.
+const DAILY_GRID_KM = 50;
+const FIGURE_10_TROPOMI_SCALE = 30e-6;
 
 const projectNorth = ([longitude, latitude]: [number, number]) => {
   const lambda = longitude * Math.PI / 180;
@@ -42,9 +45,7 @@ const dailyGrid = <T extends ProcessingResult["pixels"]["features"][number]>(fea
       brightest.set(key, { feature, x: gridX * DAILY_GRID_KM, y: gridY * DAILY_GRID_KM });
     }
   }
-  const selected = [...brightest.values()];
-  const maximumResidual = Math.max(...selected.map(({ feature }) => feature.properties.normalizedResidual), 1e-20);
-  return selected.map(({ feature, x, y }) => {
+  return [...brightest.values()].map(({ feature, x, y }) => {
     const centerLongitude = unprojectNorth(x, y)[0];
     const corners = [
       unprojectNorth(x - DAILY_GRID_KM / 2, y - DAILY_GRID_KM / 2),
@@ -59,7 +60,10 @@ const dailyGrid = <T extends ProcessingResult["pixels"]["features"][number]>(fea
     });
     return ({
       ...feature,
-      properties: { ...feature.properties, detectionScore: feature.properties.normalizedResidual / maximumResidual },
+      properties: {
+        ...feature.properties,
+        detectionScore: Math.max(0, Math.min(1, feature.properties.normalizedResidual / FIGURE_10_TROPOMI_SCALE)),
+      },
       geometry: {
         type: "Polygon" as const,
         coordinates: [[...corners, corners[0]]],
@@ -77,7 +81,14 @@ const mergeProcessingResult = (current: ProcessingResult | null, next: Processin
     ...next,
     pixels: { ...next.pixels, features: dailyGrid(next.pixels.features) },
     field: { ...next.field, features: dailyGrid(next.field.features) },
-    metadata: { ...next.metadata, orbitCount: 1, sourceFiles: [next.metadata.sourceFile].filter(Boolean), dailyGridKm: DAILY_GRID_KM, displayMode: "daily-7.5-km-grid" },
+    metadata: {
+      ...next.metadata,
+      orbitCount: 1,
+      sourceFiles: [next.metadata.sourceFile].filter(Boolean),
+      dailyGridKm: DAILY_GRID_KM,
+      visualizationScaleSr: FIGURE_10_TROPOMI_SCALE,
+      displayMode: "daily-50-km-figure-10-grid",
+    },
   };
   const clusterOffset = current.clusters.features.length;
   return {
@@ -99,6 +110,8 @@ const mergeProcessingResult = (current: ProcessingResult | null, next: Processin
       sourceFiles: [...(Array.isArray(current.metadata.sourceFiles) ? current.metadata.sourceFiles : []), next.metadata.sourceFile].filter(Boolean),
       processedAt: new Date().toISOString(),
       dailyGridKm: DAILY_GRID_KM,
+      visualizationScaleSr: FIGURE_10_TROPOMI_SCALE,
+      displayMode: "daily-50-km-figure-10-grid",
     },
   };
 };
