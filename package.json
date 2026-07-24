@@ -7,7 +7,8 @@
     "build": "next build",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "download-day": "node scripts/download-day.mjs"
   },
   "dependencies": {
     "h5wasm": "^0.10.1",

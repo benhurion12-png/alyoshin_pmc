@@ -3,3 +3,5 @@ node_modules/
 out/
 *.nc
 *.log
+data/
+*.part
