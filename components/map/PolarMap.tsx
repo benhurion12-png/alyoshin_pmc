@@ -15,17 +15,29 @@ export default function PolarMap({ pixels }: { pixels: PmcPointCollection | null
   const { landPath, graticulePath, pixelPaths, projection } = useMemo(() => {
     const projection = geoStereographic()
       .rotate([0, -90])
-      .clipAngle(89.999)
-      .scale(330)
+      .clipAngle(40)
+      .scale(900)
       .translate([width / 2, height / 2]);
     const path = geoPath(projection);
     const topology = world as unknown as { objects: { countries: Parameters<typeof feature>[1] } };
     const land = feature(world as unknown as WorldTopology, topology.objects.countries);
+    // d3-geo uses the spherical ring convention opposite to RFC 7946.
+    // Reverse the small GeoJSON pixel rings so it draws the pixel, not its complement.
+    const polarPixels = pixels?.features.map((item) => ({
+      ...item,
+      geometry: {
+        ...item.geometry,
+        coordinates: item.geometry.coordinates.map((ring) => [...ring].reverse()),
+      },
+    })) ?? [];
     return {
       projection,
       landPath: path(land) ?? "",
       graticulePath: path(geoGraticule10()) ?? "",
-      pixelPaths: pixels?.features.map((item) => ({ d: path(item) ?? "", quality: item.properties.qualityLevel })) ?? [],
+      pixelPaths: polarPixels.map((item, index) => ({
+        d: path(item) ?? "",
+        quality: pixels?.features[index].properties.qualityLevel ?? "low",
+      })),
     };
   }, [pixels]);
 
@@ -56,13 +68,13 @@ export default function PolarMap({ pixels }: { pixels: PmcPointCollection | null
     <div className="polar-wrap">
       <svg ref={svgRef} className="polar-map" viewBox={`0 0 ${width} ${height}`} xmlns="http://www.w3.org/2000/svg">
         <rect width={width} height={height} fill="#07131d" />
-        <circle cx={width / 2} cy={height / 2} r="330" fill="#a9d9e6" stroke="#6ee7ef" strokeWidth="2" />
+        <circle cx={width / 2} cy={height / 2} r="328" fill="#a9d9e6" stroke="#6ee7ef" strokeWidth="2" />
         <path d={graticulePath} fill="none" stroke="#dff7fa" strokeOpacity=".38" strokeWidth=".7" />
         <path d={landPath} fill="#f1f0eb" stroke="#bacbd0" strokeWidth=".5" />
         {pixelPaths.map((item, index) => <path key={index} d={item.d} fill={color(item.quality)} stroke={color(item.quality)} strokeWidth=".7" opacity=".92" />)}
         {pole ? <circle cx={pole[0]} cy={pole[1]} r="3" fill="#ffffff" /> : null}
         <text x="28" y="38" fill="#78e8ef" fontFamily="monospace" fontSize="15" letterSpacing="3">NORTH POLAR STEREOGRAPHIC · PMC</text>
-        <text x="28" y={height - 25} fill="#8299a6" fontFamily="monospace" fontSize="11">70°N–90°N · LONGITUDE RADIAL</text>
+        <text x="28" y={height - 25} fill="#8299a6" fontFamily="monospace" fontSize="11">50°N–90°N · LONGITUDE RADIAL</text>
       </svg>
       <div className="map-export"><button onClick={() => download("png")}>↓ PNG</button><button onClick={() => download("svg")}>↓ SVG</button></div>
     </div>

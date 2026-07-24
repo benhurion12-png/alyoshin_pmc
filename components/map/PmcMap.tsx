@@ -49,7 +49,10 @@ export default function PmcMap({ orbit, pixels, clusters }: { orbit: OrbitGeoJso
       instance.setPaintProperty("orbit-fill", "fill-opacity", 0.025);
       if (pixels?.features.length) {
         instance.setLayoutProperty("orbit-fill", "visibility", "none");
-        instance.setPaintProperty("orbit-outline", "line-opacity", .25);
+        instance.setLayoutProperty("orbit-outline", "visibility", "none");
+      } else {
+        instance.setLayoutProperty("orbit-fill", "visibility", "visible");
+        instance.setLayoutProperty("orbit-outline", "visibility", "visible");
       }
       const coordinates = orbit.features[0]?.geometry.coordinates[0] ?? [];
       if (coordinates.length) {
