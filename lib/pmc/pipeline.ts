@@ -110,6 +110,6 @@ export function detectPmc(input: PmcInput): ProcessingResult {
       "IR_UVN не загружен: используется экспериментальный residual radiance, а не residual albedo.",
       latitudeBounds && longitudeBounds ? "PMC отображаются по фактическим corner-координатам пикселей; площадь кластеров приблизительна." : "Corner-координаты отсутствуют: геометрия пикселей приблизительна.",
     ],
-    metadata: { algorithmVersion: "0.2.0", articleMethod: "approximated", settings, selectedWavelengthsNm: settings.wavelengths, signalMode: "relative-radiance", processedAt: new Date().toISOString() },
+    metadata: { algorithmVersion: "0.2.0", sourceFile: input.sourceFile, articleMethod: "approximated", settings, selectedWavelengthsNm: settings.wavelengths, signalMode: "relative-radiance", processedAt: new Date().toISOString() },
   };
 }

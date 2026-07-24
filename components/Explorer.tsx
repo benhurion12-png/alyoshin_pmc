@@ -12,8 +12,33 @@ const PmcMap = dynamic(() => import("@/components/map/PmcMap"), { ssr: false });
 const PolarMap = dynamic(() => import("@/components/map/PolarMap"), { ssr: false });
 const formatBytes = (n: number) => new Intl.NumberFormat("ru", { maximumFractionDigits: 1 }).format(n / 1024 / 1024) + " МБ";
 
+const mergeProcessingResult = (current: ProcessingResult | null, next: ProcessingResult): ProcessingResult => {
+  if (!current) return { ...next, metadata: { ...next.metadata, orbitCount: 1, sourceFiles: [next.metadata.sourceFile].filter(Boolean) } };
+  const clusterOffset = current.clusters.features.length;
+  return {
+    orbit: { type: "FeatureCollection", features: [...current.orbit.features, ...next.orbit.features] },
+    pixels: { type: "FeatureCollection", features: [...current.pixels.features, ...next.pixels.features] },
+    clusters: {
+      type: "FeatureCollection",
+      features: [...current.clusters.features, ...next.clusters.features.map((feature) => ({
+        ...feature,
+        properties: { ...feature.properties, clusterId: feature.properties.clusterId + clusterOffset },
+      }))],
+    },
+    warnings: [...new Set([...current.warnings, ...next.warnings])],
+    metadata: {
+      ...next.metadata,
+      product: "daily-orbit-mosaic",
+      orbitCount: Number(current.metadata.orbitCount ?? 1) + 1,
+      sourceFiles: [...(Array.isArray(current.metadata.sourceFiles) ? current.metadata.sourceFiles : []), next.metadata.sourceFile].filter(Boolean),
+      processedAt: new Date().toISOString(),
+    },
+  };
+};
+
 export default function Explorer() {
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const file = files[0] ?? null;
   const [inspection, setInspection] = useState<InspectionResult | null>(null);
   const [orbit, setOrbit] = useState<OrbitGeoJson | null>(null);
   const [result, setResult] = useState<ProcessingResult | null>(null);
@@ -24,15 +49,39 @@ export default function Explorer() {
   const [error, setError] = useState("");
   const worker = useRef<Worker | null>(null);
   const input = useRef<HTMLInputElement>(null);
+  const batch = useRef<{ files: File[]; index: number; aggregate: ProcessingResult | null; settings: ProcessingSettings } | null>(null);
 
   useEffect(() => {
     worker.current = new Worker(new URL("../workers/tropomi.worker.ts", import.meta.url), { type: "module" });
     worker.current.onmessage = (event: MessageEvent<WorkerResponse>) => {
       const message = event.data;
-      if (message.type === "PROGRESS") setProgress(message);
+      if (message.type === "PROGRESS") {
+        const activeBatch = batch.current;
+        setProgress(activeBatch
+          ? { stage: `Орбита ${activeBatch.index + 1}/${activeBatch.files.length} · ${message.stage}`, percent: Math.round((activeBatch.index + message.percent / 100) / activeBatch.files.length * 100) }
+          : message);
+      }
       if (message.type === "INSPECTION_COMPLETE") { setInspection(message.result); setBusy(false); setProgress({ stage: "Инспекция завершена", percent: 100 }); }
       if (message.type === "ORBIT_COMPLETE") { setOrbit(message.orbit); setBusy(false); setProgress({ stage: "Орбита построена", percent: 100 }); }
-      if (message.type === "PROCESSING_COMPLETE") { setResult(message.result); setOrbit(message.result.orbit); setBusy(false); setProgress({ stage: "Обработка завершена", percent: 100 }); }
+      if (message.type === "PROCESSING_COMPLETE") {
+        const activeBatch = batch.current;
+        if (!activeBatch) {
+          setResult(message.result); setOrbit(message.result.orbit); setBusy(false); setProgress({ stage: "Обработка завершена", percent: 100 });
+          return;
+        }
+        activeBatch.aggregate = mergeProcessingResult(activeBatch.aggregate, message.result);
+        activeBatch.index++;
+        if (activeBatch.index < activeBatch.files.length) {
+          const next = activeBatch.files[activeBatch.index];
+          setProgress({ stage: `Орбита ${activeBatch.index + 1}/${activeBatch.files.length} · ${next.name}`, percent: Math.round(activeBatch.index / activeBatch.files.length * 100) });
+          worker.current?.postMessage({ type: "PROCESS", radianceFile: next, settings: activeBatch.settings });
+        } else {
+          const complete = activeBatch.aggregate;
+          batch.current = null;
+          if (complete) { setResult(complete); setOrbit(complete.orbit); }
+          setBusy(false); setProgress({ stage: `Суточная мозаика: обработано ${activeBatch.files.length} орбит`, percent: 100 });
+        }
+      }
       if (message.type === "ERROR") { setError(`${message.message} ${message.details ?? ""}`); setBusy(false); }
       if (message.type === "CANCELLED") { setBusy(false); setProgress({ stage: "Операция отменена", percent: 0 }); }
     };
@@ -41,21 +90,29 @@ export default function Explorer() {
 
   const lat = useMemo(() => inspection?.candidates.find((c) => c.semanticType === "latitude"), [inspection]);
   const lon = useMemo(() => inspection?.candidates.find((c) => c.semanticType === "longitude"), [inspection]);
-  const choose = (next: File | undefined) => {
-    if (!next) return;
-    if (!next.name.toLowerCase().endsWith(".nc")) { setError("Выберите файл NetCDF с расширением .nc"); return; }
-    setFile(next); setInspection(null); setOrbit(null); setResult(null); setError(""); setProgress({ stage: "Файл выбран локально", percent: 0 });
+  const choose = (next: File[]) => {
+    const radiance = next.filter((item) => item.name.toLowerCase().endsWith(".nc") && item.name.includes("_RA_BD1_"));
+    if (!radiance.length) { setError("Выберите один или несколько файлов OFFL L1B_RA_BD1 с расширением .nc"); return; }
+    radiance.sort((a, b) => a.name.localeCompare(b.name));
+    setFiles(radiance); setInspection(null); setOrbit(null); setResult(null); setError("");
+    setProgress({ stage: `Выбрано орбит: ${radiance.length}`, percent: 0 });
   };
   const inspect = () => { if (file) { setBusy(true); setError(""); worker.current?.postMessage({ type: "INSPECT", file }); } };
   const extract = () => { if (file && lat && lon) { setBusy(true); setError(""); worker.current?.postMessage({ type: "EXTRACT_ORBIT", file, latitudePath: lat.path, longitudePath: lon.path }); } };
-  const process = () => { if (file) { setBusy(true); setError(""); worker.current?.postMessage({ type: "PROCESS", radianceFile: file, settings }); } };
+  const process = () => {
+    if (!files.length) return;
+    setBusy(true); setError(""); setResult(null); setOrbit(null);
+    batch.current = { files, index: 0, aggregate: null, settings };
+    setProgress({ stage: `Орбита 1/${files.length} · ${files[0].name}`, percent: 0 });
+    worker.current?.postMessage({ type: "PROCESS", radianceFile: files[0], settings });
+  };
   const download = (value: unknown, name: string) => {
     if (!value) return;
     const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], { type: "application/json" }));
     const a = document.createElement("a"); a.href = url; a.download = name; a.click(); URL.revokeObjectURL(url);
   };
   const setNumber = (key: keyof ProcessingSettings, value: number) => setSettings((current) => ({ ...current, [key]: value }));
-  const drop = (event: DragEvent) => { event.preventDefault(); choose(event.dataTransfer.files[0]); };
+  const drop = (event: DragEvent) => { event.preventDefault(); choose(Array.from(event.dataTransfer.files)); };
 
   return (
     <main>
@@ -69,16 +126,16 @@ export default function Explorer() {
         <aside>
           <div className="section-title"><b>01</b><span>ДАННЫЕ ОРБИТЫ</span></div>
           <div className="dropzone" onDragOver={(e) => e.preventDefault()} onDrop={drop} onClick={() => input.current?.click()}>
-            <input ref={input} type="file" accept=".nc" hidden onChange={(e: ChangeEvent<HTMLInputElement>) => choose(e.target.files?.[0])} />
+            <input ref={input} type="file" accept=".nc" multiple hidden onChange={(e: ChangeEvent<HTMLInputElement>) => choose(Array.from(e.target.files ?? []))} />
             <div className="orbit-icon">◎</div>
-            {file ? <><strong>{file.name}</strong><small>{formatBytes(file.size)} · локальный File API</small></> : <><strong>Перетащите RA_BD1 .nc</strong><small>или нажмите, чтобы выбрать файл</small></>}
+            {file ? <><strong>{files.length === 1 ? file.name : `${files.length} орбит RA_BD1`}</strong><small>{formatBytes(files.reduce((sum, item) => sum + item.size, 0))} · локальный File API</small></> : <><strong>Перетащите все RA_BD1 .nc</strong><small>или нажмите и выберите несколько файлов</small></>}
           </div>
           {!file ? <ApiCalendar /> : null}
           <div className="actions">
             <button className="primary" disabled={!file || busy} onClick={inspect}>Инспектировать файл <span>→</span></button>
             <button disabled={!inspection || !lat || !lon || busy} onClick={extract}>Построить орбиту</button>
             <button className="detect" disabled={!inspection || busy} onClick={process}>Найти вероятные PMC</button>
-            {busy ? <button onClick={() => worker.current?.postMessage({ type: "CANCEL" })}>Отмена</button> : null}
+            {busy ? <button onClick={() => { batch.current = null; worker.current?.postMessage({ type: "CANCEL" }); }}>Отмена</button> : null}
           </div>
           <div className="progress"><div><span>{progress.stage}</span><b>{progress.percent}%</b></div><progress value={progress.percent} max="100" /></div>
           {error ? <div className="error">{error}</div> : null}
