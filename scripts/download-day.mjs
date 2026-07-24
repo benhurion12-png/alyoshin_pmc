@@ -55,12 +55,12 @@ async function validToken() {
   return accessToken;
 }
 
-async function searchProducts(fragment) {
+async function searchProducts(productPrefix) {
   const filter = [
     "Collection/Name eq 'SENTINEL-5P'",
     `ContentDate/Start ge ${dayStart}`,
     `ContentDate/Start lt ${dayEnd.toISOString()}`,
-    `contains(Name,'${fragment}')`,
+    `startswith(Name,'${productPrefix}')`,
   ].join(" and ");
   const query = new URLSearchParams({
     "$filter": filter,
@@ -104,8 +104,8 @@ async function download(product, position, total) {
 
 try {
   const [radiance, irradiance] = await Promise.all([
-    searchProducts("_L1B_RA_BD1_"),
-    searchProducts("_L1B_IR_UVN_"),
+    searchProducts("S5P_OFFL_L1B_RA_BD1_"),
+    searchProducts("S5P_OFFL_L1B_IR_UVN_"),
   ]);
   const products = [...radiance, ...irradiance];
   console.log(`Found ${radiance.length} RA_BD1 and ${irradiance.length} IR_UVN products for ${date}.`);
