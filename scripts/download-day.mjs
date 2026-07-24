@@ -9,12 +9,13 @@ const valueAfter = (flag) => {
   return index >= 0 ? args[index + 1] : undefined;
 };
 const date = valueAfter("--date");
+const irradianceOnly = args.includes("--irradiance-only");
 const outputRoot = path.resolve(valueAfter("--output") ?? "data");
 const username = process.env.CDSE_USERNAME;
 const password = process.env.CDSE_PASSWORD;
 
 if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-  console.error("Usage: npm run download-day -- --date YYYY-MM-DD [--output data]");
+  console.error("Usage: npm run download-day -- --date YYYY-MM-DD [--output data] [--irradiance-only]");
   process.exit(1);
 }
 if (!username || !password) {
@@ -123,7 +124,7 @@ try {
   const irradiance = irradianceCandidates
     .sort((a, b) => Math.abs(new Date(a.ContentDate.Start).getTime() - targetTime) - Math.abs(new Date(b.ContentDate.Start).getTime() - targetTime))
     .slice(0, 1);
-  const products = [...radiance, ...irradiance];
+  const products = irradianceOnly ? irradiance : [...radiance, ...irradiance];
   console.log(`Found ${radiance.length} RA_BD1 and ${irradiance.length} IR_UVN products for ${date}.`);
   if (!products.length) process.exit(2);
   await authenticate(false);
