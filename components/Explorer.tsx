@@ -38,23 +38,26 @@ const dailyGrid = (features: ProcessingResult["pixels"]["features"]) => {
     const gridX = Math.round(x / DAILY_GRID_KM), gridY = Math.round(y / DAILY_GRID_KM);
     const key = `${gridX}:${gridY}`;
     const current = brightest.get(key);
-    if (!current || feature.properties.residual > current.feature.properties.residual) {
+    if (!current || feature.properties.normalizedResidual > current.feature.properties.normalizedResidual) {
       brightest.set(key, { feature, x: gridX * DAILY_GRID_KM, y: gridY * DAILY_GRID_KM });
     }
   }
-  return [...brightest.values()].map(({ feature, x, y }) => ({
-    ...feature,
-    geometry: {
-      type: "Polygon" as const,
-      coordinates: [[
-        unprojectNorth(x - DAILY_GRID_KM / 2, y - DAILY_GRID_KM / 2),
-        unprojectNorth(x + DAILY_GRID_KM / 2, y - DAILY_GRID_KM / 2),
-        unprojectNorth(x + DAILY_GRID_KM / 2, y + DAILY_GRID_KM / 2),
-        unprojectNorth(x - DAILY_GRID_KM / 2, y + DAILY_GRID_KM / 2),
-        unprojectNorth(x - DAILY_GRID_KM / 2, y - DAILY_GRID_KM / 2),
-      ]],
-    },
-  }));
+  const selected = [...brightest.values()];
+  const maximumResidual = Math.max(...selected.map(({ feature }) => feature.properties.normalizedResidual), 1e-20);
+  return selected.map(({ feature, x, y }) => ({
+      ...feature,
+      properties: { ...feature.properties, detectionScore: feature.properties.normalizedResidual / maximumResidual },
+      geometry: {
+        type: "Polygon" as const,
+        coordinates: [[
+          unprojectNorth(x - DAILY_GRID_KM / 2, y - DAILY_GRID_KM / 2),
+          unprojectNorth(x + DAILY_GRID_KM / 2, y - DAILY_GRID_KM / 2),
+          unprojectNorth(x + DAILY_GRID_KM / 2, y + DAILY_GRID_KM / 2),
+          unprojectNorth(x - DAILY_GRID_KM / 2, y + DAILY_GRID_KM / 2),
+          unprojectNorth(x - DAILY_GRID_KM / 2, y - DAILY_GRID_KM / 2),
+        ]],
+      },
+    }));
 };
 
 const mergeProcessingResult = (current: ProcessingResult | null, next: ProcessingResult): ProcessingResult => {
@@ -205,12 +208,12 @@ export default function Explorer() {
           {mapMode === "maplibre"
             ? <PmcMap key={String(result?.metadata.processedAt ?? "empty")} orbit={orbit} pixels={result?.pixels ?? null} clusters={result?.clusters ?? null} />
             : <PolarMap pixels={result?.pixels ?? null} />}
-          <div className="map-status quality-legend"><span><i className="cyan" />ОРБИТАЛЬНЫЙ СЛЕД</span><span><i className="quality low" />НИЗКИЙ</span><span><i className="quality medium" />СРЕДНИЙ</span><span><i className="quality high" />ВЫСОКИЙ</span><em>MAPLIBRE · OPENSTREETMAP</em></div>
+          <div className="map-status quality-legend"><span><i className="quality low" />0</span><span><i className="quality medium" />0,5</span><span><i className="quality high" />1,0</span><em>NORMALIZED RESIDUAL ALBEDO · 283 NM</em></div>
           {result ? <div className="result-strip">
             <div><b>{result.pixels.features.length}</b><span>пикселей</span></div><div><b>{result.clusters.features.length}</b><span>кластеров</span></div>
-            <div><b className="blue-number">{result.pixels.features.filter((feature) => feature.properties.qualityLevel === "low").length}</b><span>низкий</span></div>
-            <div><b className="yellow-number">{result.pixels.features.filter((feature) => feature.properties.qualityLevel === "medium").length}</b><span>средний</span></div>
-            <div><b className="red-number">{result.pixels.features.filter((feature) => feature.properties.qualityLevel === "high").length}</b><span>высокий</span></div>
+            <div><b className="blue-number">{result.pixels.features.filter((feature) => feature.properties.residual < 10e-6).length}</b><span>&lt;10×10⁻⁶</span></div>
+            <div><b className="yellow-number">{result.pixels.features.filter((feature) => feature.properties.residual >= 10e-6 && feature.properties.residual < 20e-6).length}</b><span>10–20×10⁻⁶</span></div>
+            <div><b className="red-number">{result.pixels.features.filter((feature) => feature.properties.residual >= 20e-6).length}</b><span>≥20×10⁻⁶</span></div>
             <button onClick={() => download(result.pixels, "pmc-pixels.geojson")}>PMC PIXELS ↓</button><button onClick={() => download(result.clusters, "pmc-clusters.geojson")}>PMC CLUSTERS ↓</button><button onClick={() => download(result.metadata, "metadata.json")}>METADATA ↓</button>
           </div> : null}
           {result?.warnings.map((warning) => <div className="warning" key={warning}>{warning}</div>)}

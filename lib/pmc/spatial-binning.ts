@@ -6,6 +6,9 @@ export type SpatialInput = {
   latitudeBounds?: Float32Array;
   longitudeBounds?: Float32Array;
   sza: Float32Array;
+  viewingZenith?: Float32Array;
+  solarAzimuth?: Float32Array;
+  viewingAzimuth?: Float32Array;
   signals: [Float32Array, Float32Array, Float32Array, Float32Array, Float32Array];
   qualityMask?: Uint8Array;
 };
@@ -54,6 +57,9 @@ export function spatialBin(input: SpatialInput): SpatialInput {
   const latitude = new Float32Array(size);
   const longitude = new Float32Array(size);
   const sza = new Float32Array(size);
+  const viewingZenith = input.viewingZenith ? new Float32Array(size) : undefined;
+  const solarAzimuth = input.solarAzimuth ? new Float32Array(size) : undefined;
+  const viewingAzimuth = input.viewingAzimuth ? new Float32Array(size) : undefined;
   const signals = input.signals.map(() => new Float32Array(size)) as SpatialInput["signals"];
   const qualityMask = new Uint8Array(size);
   const latitudeBounds = new Float32Array(size * 4);
@@ -78,7 +84,7 @@ export function spatialBin(input: SpatialInput): SpatialInput {
         continue;
       }
       const reference = input.longitude[valid[0]];
-      let totalWeight = 0, sumLat = 0, sumLon = 0, sumSza = 0;
+      let totalWeight = 0, sumLat = 0, sumLon = 0, sumSza = 0, sumVza = 0, sumSaa = 0, sumVaa = 0;
       const sumSignals = new Float64Array(signals.length);
       let minLat = 90, maxLat = -90, minLon = Infinity, maxLon = -Infinity;
       for (const index of valid) {
@@ -88,6 +94,9 @@ export function spatialBin(input: SpatialInput): SpatialInput {
         sumLat += input.latitude[index] * weight;
         sumLon += lon * weight;
         sumSza += input.sza[index] * weight;
+        if (input.viewingZenith) sumVza += input.viewingZenith[index] * weight;
+        if (input.solarAzimuth) sumSaa += input.solarAzimuth[index] * weight;
+        if (input.viewingAzimuth) sumVaa += input.viewingAzimuth[index] * weight;
         input.signals.forEach((signal, band) => { sumSignals[band] += signal[index] * weight; });
         if (input.latitudeBounds && input.longitudeBounds) {
           for (let corner = 0; corner < 4; corner++) {
@@ -103,6 +112,9 @@ export function spatialBin(input: SpatialInput): SpatialInput {
       latitude[outputIndex] = sumLat / totalWeight;
       longitude[outputIndex] = sumLon / totalWeight;
       sza[outputIndex] = sumSza / totalWeight;
+      if (viewingZenith) viewingZenith[outputIndex] = sumVza / totalWeight;
+      if (solarAzimuth) solarAzimuth[outputIndex] = sumSaa / totalWeight;
+      if (viewingAzimuth) viewingAzimuth[outputIndex] = sumVaa / totalWeight;
       signals.forEach((signal, band) => { signal[outputIndex] = sumSignals[band] / totalWeight; });
       qualityMask[outputIndex] = 1;
       if (!Number.isFinite(minLat)) {
@@ -113,5 +125,5 @@ export function spatialBin(input: SpatialInput): SpatialInput {
       longitudeBounds.set([minLon, maxLon, maxLon, minLon], outputIndex * 4);
     }
   }
-  return { rows: outputRows, cols: outputCols, latitude, longitude, latitudeBounds, longitudeBounds, sza, signals, qualityMask };
+  return { rows: outputRows, cols: outputCols, latitude, longitude, latitudeBounds, longitudeBounds, sza, viewingZenith, solarAzimuth, viewingAzimuth, signals, qualityMask };
 }

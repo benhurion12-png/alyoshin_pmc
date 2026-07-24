@@ -7,7 +7,7 @@ import world from "world-atlas/countries-110m.json";
 import type { PmcPointCollection } from "@/types/processing";
 
 type WorldTopology = Parameters<typeof feature>[0];
-const color = (quality: string) => quality === "high" ? "#ef3340" : quality === "medium" ? "#ffd84d" : "#2f80ed";
+const color = (value: number) => value >= .9 ? "#a80000" : value >= .75 ? "#ff9d00" : value >= .6 ? "#ffe600" : value >= .4 ? "#35db61" : value >= .2 ? "#00bde8" : "#1648d8";
 
 export default function PolarMap({ pixels }: { pixels: PmcPointCollection | null }) {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -36,7 +36,7 @@ export default function PolarMap({ pixels }: { pixels: PmcPointCollection | null
       graticulePath: path(geoGraticule10()) ?? "",
       pixelPaths: polarPixels.map((item, index) => ({
         d: path(item) ?? "",
-        quality: pixels?.features[index].properties.qualityLevel ?? "low",
+        value: pixels?.features[index].properties.detectionScore ?? 0,
       })),
     };
   }, [pixels]);
@@ -71,7 +71,7 @@ export default function PolarMap({ pixels }: { pixels: PmcPointCollection | null
         <circle cx={width / 2} cy={height / 2} r="328" fill="#a9d9e6" stroke="#6ee7ef" strokeWidth="2" />
         <path d={graticulePath} fill="none" stroke="#dff7fa" strokeOpacity=".38" strokeWidth=".7" />
         <path d={landPath} fill="#f1f0eb" stroke="#bacbd0" strokeWidth=".5" />
-        {pixelPaths.map((item, index) => <path key={index} d={item.d} fill={color(item.quality)} stroke={color(item.quality)} strokeWidth=".7" opacity=".92" />)}
+        {pixelPaths.map((item, index) => <path key={index} d={item.d} fill={color(item.value)} stroke={color(item.value)} strokeWidth=".7" opacity=".92" />)}
         {pole ? <circle cx={pole[0]} cy={pole[1]} r="3" fill="#ffffff" /> : null}
         <text x="28" y="38" fill="#78e8ef" fontFamily="monospace" fontSize="15" letterSpacing="3">NORTH POLAR STEREOGRAPHIC · PMC</text>
         <text x="28" y={height - 25} fill="#8299a6" fontFamily="monospace" fontSize="11">50°N–90°N · LONGITUDE RADIAL</text>

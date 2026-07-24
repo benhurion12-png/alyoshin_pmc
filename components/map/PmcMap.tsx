@@ -80,15 +80,15 @@ export default function PmcMap({ orbit, pixels, clusters }: { orbit: OrbitGeoJso
       instance.addLayer({
         id: "pmc-pixels", type: "fill", source: "pmc-pixels",
         paint: {
-          "fill-color": ["match", ["get", "qualityLevel"], "high", "#ef3340", "medium", "#ffd84d", "#2f80ed"],
+          "fill-color": ["interpolate", ["linear"], ["get", "detectionScore"], 0, "#1600a8", .2, "#006cff", .4, "#00d8d2", .6, "#4ee329", .75, "#ffe600", .9, "#ff5600", 1, "#a80000"],
           "fill-opacity": .9,
-          "fill-outline-color": ["match", ["get", "qualityLevel"], "high", "#ff8b91", "medium", "#fff0a3", "#82b7ff"],
+          "fill-outline-color": ["interpolate", ["linear"], ["get", "detectionScore"], 0, "#1600a8", .5, "#20d080", 1, "#a80000"],
         },
       });
       instance.addLayer({
         id: "pmc-pixel-outline", type: "line", source: "pmc-pixels",
         paint: {
-          "line-color": ["match", ["get", "qualityLevel"], "high", "#ff2338", "medium", "#e9b900", "#1268d6"],
+          "line-color": ["interpolate", ["linear"], ["get", "detectionScore"], 0, "#1600a8", .5, "#20d080", 1, "#a80000"],
           "line-width": ["interpolate", ["linear"], ["zoom"], 2, .7, 6, 1.6],
           "line-opacity": .95,
         },

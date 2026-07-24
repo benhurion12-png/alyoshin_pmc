@@ -72,3 +72,76 @@ export function adaptiveThreshold(residual: Float32Array, sza: Float32Array, val
   for (let i = 0; i < threshold.length; i++) threshold[i] = multiplier * sigma[Math.min(bins - 1, Math.floor(sza[i] / binSize))];
   return threshold;
 }
+
+// Digitized from Wu et al. (2026), Figure 5. The plotted curves are the final
+// detection thresholds in residual-albedo units (axis is ×10⁻⁶ sr⁻¹).
+const ARTICLE_THRESHOLD_COEFFICIENTS = [
+  [9.10672716e-4, -4.17282790e-2, 6.44562562],
+  [1.75435299e-3, -1.10785342e-1, 5.94616993],
+  [3.03516903e-3, -3.02755739e-1, 12.8398066],
+] as const;
+
+export function articleThreshold(sza: Float32Array, valid: Uint8Array, cols: number) {
+  const threshold = new Float32Array(sza.length);
+  for (let index = 0; index < threshold.length; index++) {
+    if (!valid[index]) { threshold[index] = NaN; continue; }
+    const binnedRow = index % cols;
+    const group = binnedRow < 8 ? 0 : binnedRow < 25 ? 1 : 2;
+    const [a, b, c] = ARTICLE_THRESHOLD_COEFFICIENTS[group];
+    const angle = Math.max(30, Math.min(85, sza[index]));
+    threshold[index] = (a * angle * angle + b * angle + c) * 1e-6;
+  }
+  return threshold;
+}
+
+export function iterativeArticleBackground(
+  sza: Float32Array,
+  signals: [Float32Array, Float32Array, Float32Array, Float32Array, Float32Array],
+  initialMask: Uint8Array,
+  rows: number,
+  cols: number,
+  maxIterations: number,
+  wavelengths: [number, number, number, number, number],
+) {
+  const residuals = signals.map(() => new Float32Array(sza.length)) as typeof signals;
+  const backgrounds = signals.map(() => new Float32Array(sza.length)) as typeof signals;
+  const fitMask = initialMask.slice();
+  for (let iteration = 0; iteration < maxIterations; iteration++) {
+    for (let col = 0; col < cols; col++) {
+      const x = new Float32Array(rows), mask = new Uint8Array(rows);
+      const columnSignals = signals.map(() => new Float32Array(rows)) as typeof signals;
+      for (let row = 0; row < rows; row++) {
+        const index = row * cols + col;
+        x[row] = sza[index]; mask[row] = fitMask[index];
+        signals.forEach((signal, band) => { columnSignals[band][row] = signal[index]; });
+      }
+      const coefficients = columnSignals.map((signal) => polynomialRegression(x, signal, mask));
+      for (let row = 0; row < rows; row++) {
+        const index = row * cols + col;
+        signals.forEach((signal, band) => {
+          backgrounds[band][index] = evaluatePolynomial(coefficients[band], sza[index]);
+          residuals[band][index] = signal[index] - backgrounds[band][index];
+        });
+      }
+    }
+    const threshold = articleThreshold(sza, fitMask, cols);
+    let changed = 0;
+    for (let index = 0; index < fitMask.length; index++) {
+      if (!fitMask[index]) continue;
+      let sx = 0, sy = 0, sxx = 0, sxy = 0;
+      for (let band = 0; band < wavelengths.length; band++) {
+        const x = wavelengths[band], y = residuals[band][index];
+        sx += x; sy += y; sxx += x * x; sxy += x * y;
+      }
+      const slope = (wavelengths.length * sxy - sx * sy) / (wavelengths.length * sxx - sx * sx);
+      if (residuals[0][index] > threshold[index]
+        && residuals[0][index] > 0 && residuals[1][index] > 0 && residuals[2][index] > 0
+        && residuals[0][index] > residuals[2][index] && slope < 0) {
+        fitMask[index] = 0;
+        changed++;
+      }
+    }
+    if (!changed) break;
+  }
+  return { residuals, backgrounds };
+}

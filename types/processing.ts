@@ -19,6 +19,7 @@ export type PmcProperties = {
   wavelengthNm: number;
   signalMode: "relative-radiance" | "albedo";
   residual: number;
+  normalizedResidual: number;
   threshold: number;
   signalToNoise: number;
   detectionScore: number;

@@ -122,6 +122,9 @@ async function processPmc(fileObject: File, irradianceFile: File | undefined, se
   const latitudeBounds = findDataset(file, (name) => name === "latitude_bounds");
   const longitudeBounds = findDataset(file, (name) => name === "longitude_bounds");
   const sza = findDataset(file, (name) => name === "solar_zenith_angle");
+  const viewingZenith = findDataset(file, (name) => name === "viewing_zenith_angle");
+  const solarAzimuth = findDataset(file, (name) => name === "solar_azimuth_angle");
+  const viewingAzimuth = findDataset(file, (name) => name === "viewing_azimuth_angle");
   const groundPixelQuality = findDataset(file, (name) => name === "ground_pixel_quality");
   const measurementQuality = findDataset(file, (name) => name === "measurement_quality");
   const qualityLevel = findDataset(file, (name) => name === "quality_level");
@@ -191,6 +194,9 @@ async function processPmc(fileObject: File, irradianceFile: File | undefined, se
     latitudeBounds: latitudeBounds ? asFloat32(latitudeBounds.value) : undefined,
     longitudeBounds: longitudeBounds ? asFloat32(longitudeBounds.value) : undefined,
     sza: solarZenith, signals, qualityMask,
+    viewingZenith: viewingZenith ? asFloat32(viewingZenith.value) : undefined,
+    solarAzimuth: solarAzimuth ? asFloat32(solarAzimuth.value) : undefined,
+    viewingAzimuth: viewingAzimuth ? asFloat32(viewingAzimuth.value) : undefined,
   });
   send({ type: "PROGRESS", stage: "Итеративная фоновая модель", percent: 72, bytesRead: 0 });
   const result = detectPmc({

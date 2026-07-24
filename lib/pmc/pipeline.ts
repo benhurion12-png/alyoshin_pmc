@@ -1,5 +1,5 @@
 import { buildOrbitFootprint } from "../geo/orbit-geojson";
-import { adaptiveThreshold, iterativeBackground } from "./background";
+import { adaptiveThreshold, articleThreshold, iterativeArticleBackground, iterativeBackground } from "./background";
 import { connectedComponents, closing, opening } from "./morphology";
 import { median } from "./statistics";
 import type { PmcClusterCollection, PmcPointCollection, ProcessingResult, ProcessingSettings } from "../../types/processing";
@@ -13,6 +13,9 @@ export type PmcInput = {
   latitudeBounds?: Float32Array;
   longitudeBounds?: Float32Array;
   sza: Float32Array;
+  viewingZenith?: Float32Array;
+  solarAzimuth?: Float32Array;
+  viewingAzimuth?: Float32Array;
   signals: [Float32Array, Float32Array, Float32Array, Float32Array, Float32Array];
   qualityMask?: Uint8Array;
   signalMode?: "relative-radiance" | "albedo";
@@ -31,8 +34,12 @@ export function detectPmc(input: PmcInput): ProcessingResult {
     backgroundValid[i] = instrumentValid && latitude[i] >= 50 ? 1 : 0;
     valid[i] = instrumentValid && latitude[i] >= settings.minLatitude ? 1 : 0;
   }
-  const residuals = signals.map((signal) => iterativeBackground(sza, signal, backgroundValid, rows, cols, settings.maxIterations).residual) as [Float32Array, Float32Array, Float32Array, Float32Array, Float32Array];
-  const threshold = adaptiveThreshold(residuals[0], sza, valid, settings.szaBinSize, settings.noiseMultiplier);
+  const residuals = input.signalMode === "albedo"
+    ? iterativeArticleBackground(sza, signals, backgroundValid, rows, cols, settings.maxIterations, settings.wavelengths).residuals
+    : signals.map((signal) => iterativeBackground(sza, signal, backgroundValid, rows, cols, settings.maxIterations).residual) as [Float32Array, Float32Array, Float32Array, Float32Array, Float32Array];
+  const threshold = input.signalMode === "albedo"
+    ? articleThreshold(sza, valid, cols)
+    : adaptiveThreshold(residuals[0], sza, valid, settings.szaBinSize, settings.noiseMultiplier);
   let mask = new Uint8Array(valid.length);
   for (let i = 0; i < mask.length; i++) {
     let sx = 0, sy = 0, sxx = 0, sxy = 0;
@@ -49,15 +56,36 @@ export function detectPmc(input: PmcInput): ProcessingResult {
 
   const pixelFeatures: PmcPointCollection["features"] = [];
   const clusterFeatures: PmcClusterCollection["features"] = [];
+  const phaseAngles = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180];
+  const phase40nm = [5.35, 5.2, 4.75, 4.1, 3.35, 2.68, 2.1, 1.65, 1.28, 1, .84, .76, .72, .72, .73, .75, .77, .79, .8];
+  const phaseAt = (angle: number) => {
+    const bounded = Math.max(0, Math.min(180, angle));
+    const lower = Math.min(phaseAngles.length - 2, Math.floor(bounded / 10));
+    const fraction = (bounded - phaseAngles[lower]) / 10;
+    return phase40nm[lower] * (1 - fraction) + phase40nm[lower + 1] * fraction;
+  };
   const base = (i: number, count: number) => {
     const snr = residuals[0][i] / Math.max(threshold[i] / settings.noiseMultiplier, 1e-20);
-    const score = Math.max(0, Math.min(1, 0.45 * Math.min(snr / 6, 1) + 0.35 * Math.min(count / 12, 1) + 0.2 * Math.min((residuals[0][i] - residuals[2][i]) / Math.max(residuals[0][i], 1e-20), 1)));
+    const score = Math.max(0, Math.min(1, residuals[0][i] / 35e-6));
+    let normalizedResidual = residuals[0][i];
+    if (input.viewingZenith && input.solarAzimuth && input.viewingAzimuth) {
+      const toRadians = Math.PI / 180;
+      const solarZenith = sza[i] * toRadians;
+      const viewingZenith = input.viewingZenith[i] * toRadians;
+      const relativeAzimuth = (input.solarAzimuth[i] - input.viewingAzimuth[i]) * toRadians;
+      const separation = Math.acos(Math.max(-1, Math.min(1,
+        Math.cos(solarZenith) * Math.cos(viewingZenith)
+        + Math.sin(solarZenith) * Math.sin(viewingZenith) * Math.cos(relativeAzimuth),
+      )));
+      const scatteringAngle = 180 - separation / toRadians;
+      normalizedResidual = residuals[0][i] / phaseAt(scatteringAngle) * Math.cos(viewingZenith);
+    }
     return {
       sourceFile: input.sourceFile, wavelengthNm: settings.wavelengths[0], signalMode: input.signalMode ?? "relative-radiance",
-      residual: residuals[0][i], threshold: threshold[i], signalToNoise: snr,
+      residual: residuals[0][i], normalizedResidual, threshold: threshold[i], signalToNoise: snr,
       detectionScore: score,
       pixelCount: count, geometryApproximate: !(latitudeBounds && longitudeBounds),
-      qualityLevel: score >= .72 ? "high" as const : score >= .45 ? "medium" as const : "low" as const,
+      qualityLevel: residuals[0][i] >= 20e-6 ? "high" as const : residuals[0][i] >= 10e-6 ? "medium" as const : "low" as const,
     };
   };
   for (const component of components) {
@@ -109,10 +137,13 @@ export function detectPmc(input: PmcInput): ProcessingResult {
     clusters: { type: "FeatureCollection", features: clusterFeatures },
     warnings: [
       input.signalMode === "albedo"
-        ? "Использован IR_UVN: обнаружение выполнено по residual albedo."
+        ? "Использован IR_UVN и оцифрованные row-group пороги Figure 5 статьи Wu et al. (2026)."
         : "IR_UVN не загружен: используется экспериментальный residual radiance, а не residual albedo.",
+      input.viewingZenith && input.solarAzimuth && input.viewingAzimuth
+        ? "Residual albedo нормализовано к надиру по Equation (3) и фазовой функции частиц 40 нм из Figure 6."
+        : "Углы наблюдения не найдены: радиометрическая нормализация Equation (3) не применена.",
       latitudeBounds && longitudeBounds ? "PMC отображаются по фактическим corner-координатам пикселей; площадь кластеров приблизительна." : "Corner-координаты отсутствуют: геометрия пикселей приблизительна.",
     ],
-    metadata: { algorithmVersion: "0.3.0", sourceFile: input.sourceFile, articleMethod: input.signalMode === "albedo" ? "albedo-partial" : "approximated", settings, selectedWavelengthsNm: settings.wavelengths, signalMode: input.signalMode ?? "relative-radiance", processedAt: new Date().toISOString() },
+    metadata: { algorithmVersion: "0.4.0", sourceFile: input.sourceFile, articleMethod: input.signalMode === "albedo" ? "figure-5-digitized-thresholds" : "approximated", settings, selectedWavelengthsNm: settings.wavelengths, signalMode: input.signalMode ?? "relative-radiance", processedAt: new Date().toISOString() },
   };
 }
