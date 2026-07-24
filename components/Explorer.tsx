@@ -3,11 +3,13 @@
 import dynamic from "next/dynamic";
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import DatasetTree from "@/components/inspection/DatasetTree";
+import ApiCalendar from "@/components/catalogue/ApiCalendar";
 import type { InspectionResult, OrbitGeoJson } from "@/types/netcdf";
 import type { WorkerResponse } from "@/types/worker";
 import { DEFAULT_SETTINGS, type ProcessingResult, type ProcessingSettings } from "@/types/processing";
 
 const PmcMap = dynamic(() => import("@/components/map/PmcMap"), { ssr: false });
+const PolarMap = dynamic(() => import("@/components/map/PolarMap"), { ssr: false });
 const formatBytes = (n: number) => new Intl.NumberFormat("ru", { maximumFractionDigits: 1 }).format(n / 1024 / 1024) + " МБ";
 
 export default function Explorer() {
@@ -16,6 +18,7 @@ export default function Explorer() {
   const [orbit, setOrbit] = useState<OrbitGeoJson | null>(null);
   const [result, setResult] = useState<ProcessingResult | null>(null);
   const [settings, setSettings] = useState<ProcessingSettings>(DEFAULT_SETTINGS);
+  const [mapMode, setMapMode] = useState<"maplibre" | "polar">("maplibre");
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState({ stage: "Ожидание файла", percent: 0 });
   const [error, setError] = useState("");
@@ -70,6 +73,7 @@ export default function Explorer() {
             <div className="orbit-icon">◎</div>
             {file ? <><strong>{file.name}</strong><small>{formatBytes(file.size)} · локальный File API</small></> : <><strong>Перетащите RA_BD1 .nc</strong><small>или нажмите, чтобы выбрать файл</small></>}
           </div>
+          {!file ? <ApiCalendar /> : null}
           <div className="actions">
             <button className="primary" disabled={!file || busy} onClick={inspect}>Инспектировать файл <span>→</span></button>
             <button disabled={!inspection || !lat || !lon || busy} onClick={extract}>Построить орбиту</button>
@@ -89,8 +93,13 @@ export default function Explorer() {
         </aside>
 
         <section className="main-panel">
-          <div className="section-title"><b>02</b><span>ВЕРОЯТНЫЕ ПОЛЯРНЫЕ МЕЗОСФЕРНЫЕ ОБЛАКА</span>{orbit ? <button className="download" onClick={() => download(orbit, "orbit.geojson")}>↓ ORBIT</button> : null}</div>
-          <PmcMap key={String(result?.metadata.processedAt ?? "empty")} orbit={orbit} pixels={result?.pixels ?? null} clusters={result?.clusters ?? null} />
+          <div className="section-title"><b>02</b><span>ВЕРОЯТНЫЕ ПОЛЯРНЫЕ МЕЗОСФЕРНЫЕ ОБЛАКА</span>
+            <div className="projection-switch"><button className={mapMode === "maplibre" ? "active" : ""} onClick={() => setMapMode("maplibre")}>MAPLIBRE</button><button className={mapMode === "polar" ? "active" : ""} onClick={() => setMapMode("polar")}>POLAR</button></div>
+            {orbit ? <button className="download" onClick={() => download(orbit, "orbit.geojson")}>↓ ORBIT</button> : null}
+          </div>
+          {mapMode === "maplibre"
+            ? <PmcMap key={String(result?.metadata.processedAt ?? "empty")} orbit={orbit} pixels={result?.pixels ?? null} clusters={result?.clusters ?? null} />
+            : <PolarMap pixels={result?.pixels ?? null} />}
           <div className="map-status quality-legend"><span><i className="cyan" />ОРБИТАЛЬНЫЙ СЛЕД</span><span><i className="quality low" />НИЗКИЙ</span><span><i className="quality medium" />СРЕДНИЙ</span><span><i className="quality high" />ВЫСОКИЙ</span><em>MAPLIBRE · OPENSTREETMAP</em></div>
           {result ? <div className="result-strip">
             <div><b>{result.pixels.features.length}</b><span>пикселей</span></div><div><b>{result.clusters.features.length}</b><span>кластеров</span></div>

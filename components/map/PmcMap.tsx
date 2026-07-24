@@ -16,6 +16,7 @@ export default function PmcMap({ orbit, pixels, clusters }: { orbit: OrbitGeoJso
       center: [0, 35],
       zoom: 1.25,
       renderWorldCopies: false,
+      canvasContextAttributes: { preserveDrawingBuffer: true },
       style: {
         version: 8,
         sources: {
@@ -99,5 +100,14 @@ export default function PmcMap({ orbit, pixels, clusters }: { orbit: OrbitGeoJso
     if (instance.isStyleLoaded()) apply(); else instance.once("load", apply);
   }, [pixels, clusters]);
 
-  return <div ref={container} className="map" aria-label="Карта орбиты TROPOMI" />;
+  const savePng = () => {
+    const canvas = map.current?.getCanvas(); if (!canvas) return;
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob); const anchor = document.createElement("a");
+      anchor.href = url; anchor.download = "pmc-maplibre-map.png"; anchor.click(); URL.revokeObjectURL(url);
+    }, "image/png");
+  };
+
+  return <div className="map-wrap"><div ref={container} className="map" aria-label="Карта орбиты TROPOMI" /><div className="map-export"><button onClick={savePng}>↓ PNG</button></div></div>;
 }
