@@ -4,15 +4,15 @@ import { useMemo, useRef } from "react";
 import { geoGraticule10, geoPath, geoStereographic } from "d3-geo";
 import { feature } from "topojson-client";
 import world from "world-atlas/countries-110m.json";
-import type { PmcPointCollection, ResidualFieldCollection } from "@/types/processing";
+import type { ResidualFieldCollection } from "@/types/processing";
 
 type WorldTopology = Parameters<typeof feature>[0];
 const color = (value: number) => value >= .9 ? "#a80000" : value >= .75 ? "#ff9d00" : value >= .6 ? "#ffe600" : value >= .4 ? "#35db61" : value >= .2 ? "#00bde8" : "#1648d8";
 
-export default function PolarMap({ field, pixels, singleOrbit = false }: { field: ResidualFieldCollection | null; pixels: PmcPointCollection | null; singleOrbit?: boolean }) {
+export default function PolarMap({ field, singleOrbit = false }: { field: ResidualFieldCollection | null; singleOrbit?: boolean }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const width = 900, height = 720;
-  const { landPath, graticulePath, fieldPaths, pixelPaths, projection } = useMemo(() => {
+  const { landPath, graticulePath, fieldPaths, projection } = useMemo(() => {
     const projection = geoStereographic()
       .rotate([0, -90])
       .clipAngle(singleOrbit ? 20 : 40)
@@ -23,13 +23,6 @@ export default function PolarMap({ field, pixels, singleOrbit = false }: { field
     const land = feature(world as unknown as WorldTopology, topology.objects.countries);
     // d3-geo uses the spherical ring convention opposite to RFC 7946.
     // Reverse the small GeoJSON pixel rings so it draws the pixel, not its complement.
-    const polarPixels = pixels?.features.map((item) => ({
-      ...item,
-      geometry: {
-        ...item.geometry,
-        coordinates: item.geometry.coordinates.map((ring) => [...ring].reverse()),
-      },
-    })) ?? [];
     const polarField = field?.features.map((item) => ({
       ...item,
       geometry: {
@@ -45,12 +38,8 @@ export default function PolarMap({ field, pixels, singleOrbit = false }: { field
         d: path(item) ?? "",
         value: field?.features[index].properties.detectionScore ?? 0,
       })),
-      pixelPaths: polarPixels.map((item, index) => ({
-        d: path(item) ?? "",
-        value: pixels?.features[index].properties.detectionScore ?? 0,
-      })),
     };
-  }, [field, pixels, singleOrbit]);
+  }, [field, singleOrbit]);
 
   const download = (format: "svg" | "png") => {
     const svg = svgRef.current; if (!svg) return;
@@ -83,7 +72,6 @@ export default function PolarMap({ field, pixels, singleOrbit = false }: { field
         <path d={graticulePath} fill="none" stroke="#dff7fa" strokeOpacity=".38" strokeWidth=".7" />
         <path d={landPath} fill="#f1f0eb" stroke="#bacbd0" strokeWidth=".5" />
         {fieldPaths.map((item, index) => <path key={`field-${index}`} d={item.d} fill={color(item.value)} stroke="none" opacity=".88" />)}
-        {pixelPaths.map((item, index) => <path key={`mask-${index}`} d={item.d} fill="none" stroke="#ffffff" strokeWidth=".45" opacity=".72" />)}
         {pole ? <circle cx={pole[0]} cy={pole[1]} r="3" fill="#ffffff" /> : null}
         <text x="28" y="38" fill="#78e8ef" fontFamily="monospace" fontSize="15" letterSpacing="3">NORTH POLAR STEREOGRAPHIC · PMC</text>
         <text x="28" y={height - 25} fill="#8299a6" fontFamily="monospace" fontSize="11">{singleOrbit ? "70°N–90°N · NATIVE 2×2 / 2×3 BINS" : "50°N–90°N · DAILY 7.5 KM GRID"}</text>

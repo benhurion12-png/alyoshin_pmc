@@ -90,7 +90,7 @@ export default function PmcMap({ orbit, field, pixels, clusters }: { orbit: Orbi
         id: "pmc-pixels", type: "fill", source: "pmc-pixels",
         paint: {
           "fill-color": ["interpolate", ["linear"], ["get", "detectionScore"], 0, "#1600a8", .2, "#006cff", .4, "#00d8d2", .6, "#4ee329", .75, "#ffe600", .9, "#ff5600", 1, "#a80000"],
-          "fill-opacity": .18,
+          "fill-opacity": 0,
           "fill-outline-color": ["interpolate", ["linear"], ["get", "detectionScore"], 0, "#1600a8", .5, "#20d080", 1, "#a80000"],
         },
       });
@@ -99,7 +99,7 @@ export default function PmcMap({ orbit, field, pixels, clusters }: { orbit: Orbi
         paint: {
           "line-color": ["interpolate", ["linear"], ["get", "detectionScore"], 0, "#1600a8", .5, "#20d080", 1, "#a80000"],
           "line-width": ["interpolate", ["linear"], ["zoom"], 2, .7, 6, 1.6],
-          "line-opacity": .95,
+          "line-opacity": 0,
         },
       });
       const popup = (event: maplibregl.MapLayerMouseEvent) => {

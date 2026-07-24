@@ -44,20 +44,28 @@ const dailyGrid = <T extends ProcessingResult["pixels"]["features"][number]>(fea
   }
   const selected = [...brightest.values()];
   const maximumResidual = Math.max(...selected.map(({ feature }) => feature.properties.normalizedResidual), 1e-20);
-  return selected.map(({ feature, x, y }) => ({
+  return selected.map(({ feature, x, y }) => {
+    const centerLongitude = unprojectNorth(x, y)[0];
+    const corners = [
+      unprojectNorth(x - DAILY_GRID_KM / 2, y - DAILY_GRID_KM / 2),
+      unprojectNorth(x + DAILY_GRID_KM / 2, y - DAILY_GRID_KM / 2),
+      unprojectNorth(x + DAILY_GRID_KM / 2, y + DAILY_GRID_KM / 2),
+      unprojectNorth(x - DAILY_GRID_KM / 2, y + DAILY_GRID_KM / 2),
+    ].map(([longitude, latitude]) => {
+      let unwrapped = longitude;
+      while (unwrapped - centerLongitude > 180) unwrapped -= 360;
+      while (unwrapped - centerLongitude < -180) unwrapped += 360;
+      return [unwrapped, latitude] as [number, number];
+    });
+    return ({
       ...feature,
       properties: { ...feature.properties, detectionScore: feature.properties.normalizedResidual / maximumResidual },
       geometry: {
         type: "Polygon" as const,
-        coordinates: [[
-          unprojectNorth(x - DAILY_GRID_KM / 2, y - DAILY_GRID_KM / 2),
-          unprojectNorth(x + DAILY_GRID_KM / 2, y - DAILY_GRID_KM / 2),
-          unprojectNorth(x + DAILY_GRID_KM / 2, y + DAILY_GRID_KM / 2),
-          unprojectNorth(x - DAILY_GRID_KM / 2, y + DAILY_GRID_KM / 2),
-          unprojectNorth(x - DAILY_GRID_KM / 2, y - DAILY_GRID_KM / 2),
-        ]],
+        coordinates: [[...corners, corners[0]]],
       },
-    } as T));
+    } as T);
+  });
 };
 
 const mergeProcessingResult = (current: ProcessingResult | null, next: ProcessingResult, daily: boolean): ProcessingResult => {
@@ -217,7 +225,7 @@ export default function Explorer() {
           </div>
           {mapMode === "maplibre"
             ? <PmcMap key={String(result?.metadata.processedAt ?? "empty")} orbit={orbit} field={result?.field ?? null} pixels={result?.pixels ?? null} clusters={result?.clusters ?? null} />
-            : <PolarMap field={result?.field ?? null} pixels={result?.pixels ?? null} singleOrbit={Number(result?.metadata.orbitCount ?? 0) === 1} />}
+            : <PolarMap field={result?.field ?? null} singleOrbit={Number(result?.metadata.orbitCount ?? 0) === 1} />}
           <div className="map-status quality-legend"><span><i className="quality low" />0</span><span><i className="quality medium" />0,5</span><span><i className="quality high" />1,0</span><em>NORMALIZED RESIDUAL ALBEDO · 283 NM</em></div>
           {result ? <div className="result-strip">
             <div><b>{result.field.features.length}</b><span>ячеек residual</span></div><div><b>{result.pixels.features.length}</b><span>PMC-пикселей</span></div><div><b>{result.clusters.features.length}</b><span>кластеров</span></div>
