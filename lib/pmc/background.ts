@@ -102,7 +102,6 @@ export function iterativeArticleBackground(
   cols: number,
   maxIterations: number,
   wavelengths: [number, number, number, number, number],
-  thresholdMultiplier = 2.2,
 ) {
   const residuals = signals.map(() => new Float32Array(sza.length)) as typeof signals;
   const backgrounds = signals.map(() => new Float32Array(sza.length)) as typeof signals;
@@ -135,7 +134,7 @@ export function iterativeArticleBackground(
         sx += x; sy += y; sxx += x * x; sxy += x * y;
       }
       const slope = (wavelengths.length * sxy - sx * sy) / (wavelengths.length * sxx - sx * sx);
-      if (residuals[0][index] > thresholdMultiplier * threshold[index]
+      if (residuals[0][index] > threshold[index]
         && residuals[0][index] > 0 && residuals[1][index] > 0 && residuals[2][index] > 0
         && residuals[0][index] > residuals[2][index] && slope < 0) {
         fitMask[index] = 0;

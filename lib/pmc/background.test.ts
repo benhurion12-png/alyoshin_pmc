@@ -11,6 +11,14 @@ describe("articleThreshold", () => {
     expect(threshold[8]).toBeCloseTo(5.615e-6, 8);
     expect(threshold[25]).toBeCloseTo(5.601e-6, 8);
   });
+
+  it("returns the final plotted 2.2 × Threshold curve without another 2.2 multiplier", () => {
+    const sza = new Float32Array([60]);
+    const valid = new Uint8Array([1]);
+    const finalThreshold = articleThreshold(sza, valid, 1);
+    expect(finalThreshold[0]).toBeCloseTo(7.22e-6, 8);
+    expect(finalThreshold[0]).not.toBeCloseTo(15.884e-6, 8);
+  });
 });
 
 describe("northern PMC season", () => {

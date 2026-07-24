@@ -269,7 +269,7 @@ export default function Explorer() {
             <button onClick={() => download(result.field, "residual-field.geojson")}>RESIDUAL FIELD ↓</button><button onClick={() => download(result.pixels, "pmc-pixels.geojson")}>PMC MASK ↓</button><button onClick={() => download(result.clusters, "pmc-clusters.geojson")}>PMC CLUSTERS ↓</button><button onClick={() => download(result.metadata, "metadata.json")}>METADATA ↓</button>
           </div> : null}
           {areaStats ? <div className="area-summary">
-            <div><span>ОБНАРУЖЕННАЯ ПЛОЩАДЬ PMC</span><b>{formatArea(areaStats.detectedAreaKm2)} км²</b></div>
+            <div><span>ПОКРЫТИЕ PMC-ЯЧЕЕК (НЕ ФИЗ. ПЛОЩАДЬ)</span><b>{formatArea(areaStats.detectedAreaKm2)} км²</b></div>
             <div><span>СЛАБЫЕ / СРЕДНИЕ / ЯРКИЕ</span><b>{formatArea(areaStats.lowAreaKm2)} / {formatArea(areaStats.mediumAreaKm2)} / {formatArea(areaStats.highAreaKm2)} км²</b></div>
             <div><span>ДОЛЯ ЗОНЫ 50–90°N</span><b>{areaStats.polarCapFraction.toFixed(2)}%</b></div>
             <div><span>МЕТОД ПЛОЩАДИ</span><b>{areaStats.daily ? "ЯЧЕЙКИ 50×50 КМ" : `≈ ${areaStats.cellAreaKm2} КМ² / BIN`}</b></div>
