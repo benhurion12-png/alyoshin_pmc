@@ -22,8 +22,22 @@ export type PmcInput = {
   settings: ProcessingSettings;
 };
 
+// The northern-hemisphere analysis in Wu et al. is seasonal. Their off-season
+// reference windows are days -40…-31 and +71…+80 relative to the summer
+// solstice, implying an analysed PMC season of approximately -30…+70 days.
+export function isNorthernPmcSeason(sourceFile: string) {
+  const match = sourceFile.match(/_RA_BD1_(\d{4})(\d{2})(\d{2})T/);
+  if (!match) return true;
+  const year = Number(match[1]);
+  const observation = Date.UTC(year, Number(match[2]) - 1, Number(match[3]));
+  const solstice = Date.UTC(year, 5, 21);
+  const dayFromSolstice = Math.round((observation - solstice) / 86_400_000);
+  return dayFromSolstice >= -30 && dayFromSolstice <= 70;
+}
+
 export function detectPmc(input: PmcInput): ProcessingResult {
   const { rows, cols, latitude, longitude, latitudeBounds, longitudeBounds, sza, signals, qualityMask, settings } = input;
+  const inSeason = isNorthernPmcSeason(input.sourceFile);
   const valid = new Uint8Array(rows * cols), backgroundValid = new Uint8Array(rows * cols);
   for (let i = 0; i < valid.length; i++) {
     const crossTrack = i % cols;
@@ -32,10 +46,10 @@ export function detectPmc(input: PmcInput): ProcessingResult {
       && Number.isFinite(latitude[i]) && Number.isFinite(longitude[i]) && Number.isFinite(sza[i])
       && latitude[i] <= settings.maxLatitude && sza[i] >= settings.minSza && sza[i] <= settings.maxSza;
     backgroundValid[i] = instrumentValid && latitude[i] >= 50 ? 1 : 0;
-    valid[i] = instrumentValid && latitude[i] >= settings.minLatitude ? 1 : 0;
+    valid[i] = inSeason && instrumentValid && latitude[i] >= settings.minLatitude ? 1 : 0;
   }
   const residuals = input.signalMode === "albedo"
-    ? iterativeArticleBackground(sza, signals, backgroundValid, rows, cols, settings.maxIterations, settings.wavelengths).residuals
+    ? iterativeArticleBackground(sza, signals, backgroundValid, rows, cols, settings.maxIterations, settings.wavelengths, settings.noiseMultiplier).residuals
     : signals.map((signal) => iterativeBackground(sza, signal, backgroundValid, rows, cols, settings.maxIterations).residual) as [Float32Array, Float32Array, Float32Array, Float32Array, Float32Array];
   const threshold = input.signalMode === "albedo"
     ? articleThreshold(sza, valid, cols)
@@ -45,7 +59,7 @@ export function detectPmc(input: PmcInput): ProcessingResult {
     let sx = 0, sy = 0, sxx = 0, sxy = 0;
     for (let w = 0; w < settings.wavelengths.length; w++) { const x = settings.wavelengths[w], y = residuals[w][i]; sx += x; sy += y; sxx += x * x; sxy += x * y; }
     const slope = (settings.wavelengths.length * sxy - sx * sy) / (settings.wavelengths.length * sxx - sx * sx);
-    if (valid[i] && residuals[0][i] > threshold[i] && residuals[0][i] > 0 && residuals[1][i] > 0 && residuals[2][i] > 0
+    if (valid[i] && residuals[0][i] > settings.noiseMultiplier * threshold[i] && residuals[0][i] > 0 && residuals[1][i] > 0 && residuals[2][i] > 0
       && residuals[0][i] > residuals[2][i] && slope < 0) mask[i] = 1;
   }
   if (settings.morphologicalClosing) mask = closing(mask, rows, cols);
@@ -66,7 +80,8 @@ export function detectPmc(input: PmcInput): ProcessingResult {
     return phase40nm[lower] * (1 - fraction) + phase40nm[lower + 1] * fraction;
   };
   const base = (i: number, count: number) => {
-    const snr = residuals[0][i] / Math.max(threshold[i] / settings.noiseMultiplier, 1e-20);
+    const finalThreshold = input.signalMode === "albedo" ? settings.noiseMultiplier * threshold[i] : threshold[i];
+    const snr = residuals[0][i] / Math.max(finalThreshold, 1e-20);
     const score = Math.max(0, Math.min(1, residuals[0][i] / 60e-6));
     let normalizedResidual = residuals[0][i];
     if (input.viewingZenith && input.solarAzimuth && input.viewingAzimuth) {
@@ -83,7 +98,7 @@ export function detectPmc(input: PmcInput): ProcessingResult {
     }
     return {
       sourceFile: input.sourceFile, wavelengthNm: settings.wavelengths[0], signalMode: input.signalMode ?? "relative-radiance",
-      residual: residuals[0][i], normalizedResidual, threshold: threshold[i], signalToNoise: snr,
+      residual: residuals[0][i], normalizedResidual, threshold: finalThreshold, signalToNoise: snr,
       detectionScore: score,
       pixelCount: count, geometryApproximate: !(latitudeBounds && longitudeBounds),
       qualityLevel: residuals[0][i] >= 20e-6 ? "high" as const : residuals[0][i] >= 10e-6 ? "medium" as const : "low" as const,
@@ -152,6 +167,9 @@ export function detectPmc(input: PmcInput): ProcessingResult {
     pixels: { type: "FeatureCollection", features: pixelFeatures },
     clusters: { type: "FeatureCollection", features: clusterFeatures },
     warnings: [
+      !inSeason
+        ? "Дата находится вне северного PMC-сезона статьи (примерно 22 мая — 30 августа): PMC-маска намеренно пуста, фон не обозначается как облака."
+        : "Дата находится внутри северного PMC-сезона статьи.",
       input.signalMode === "albedo"
         ? "Использован IR_UVN и оцифрованные row-group пороги Figure 5 статьи Wu et al. (2026)."
         : "IR_UVN не загружен: используется экспериментальный residual radiance, а не residual albedo.",
@@ -160,6 +178,6 @@ export function detectPmc(input: PmcInput): ProcessingResult {
         : "Углы наблюдения не найдены: радиометрическая нормализация Equation (3) не применена.",
       latitudeBounds && longitudeBounds ? "PMC отображаются по фактическим corner-координатам пикселей; площадь кластеров приблизительна." : "Corner-координаты отсутствуют: геометрия пикселей приблизительна.",
     ],
-    metadata: { algorithmVersion: "0.4.0", sourceFile: input.sourceFile, articleMethod: input.signalMode === "albedo" ? "figure-5-digitized-thresholds" : "approximated", settings, selectedWavelengthsNm: settings.wavelengths, signalMode: input.signalMode ?? "relative-radiance", processedAt: new Date().toISOString() },
+    metadata: { algorithmVersion: "0.5.0", sourceFile: input.sourceFile, inNorthernPmcSeason: inSeason, articleMethod: input.signalMode === "albedo" ? "figure-5-threshold-times-n" : "approximated", settings, selectedWavelengthsNm: settings.wavelengths, signalMode: input.signalMode ?? "relative-radiance", processedAt: new Date().toISOString() },
   };
 }

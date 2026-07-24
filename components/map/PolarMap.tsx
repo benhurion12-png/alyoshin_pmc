@@ -4,12 +4,12 @@ import { useMemo, useRef } from "react";
 import { geoGraticule10, geoPath, geoStereographic } from "d3-geo";
 import { feature } from "topojson-client";
 import world from "world-atlas/countries-110m.json";
-import type { ResidualFieldCollection } from "@/types/processing";
+import type { PmcPointCollection, ResidualFieldCollection } from "@/types/processing";
 
 type WorldTopology = Parameters<typeof feature>[0];
 const color = (value: number) => value >= .9 ? "#a80000" : value >= .75 ? "#ff9d00" : value >= .6 ? "#ffe600" : value >= .4 ? "#35db61" : value >= .2 ? "#00bde8" : "#1648d8";
 
-export default function PolarMap({ field, singleOrbit = false }: { field: ResidualFieldCollection | null; singleOrbit?: boolean }) {
+export default function PolarMap({ field, singleOrbit = false }: { field: ResidualFieldCollection | PmcPointCollection | null; singleOrbit?: boolean }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const width = 900, height = 720;
   const { landPath, graticulePath, fieldPaths, projection } = useMemo(() => {

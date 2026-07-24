@@ -80,6 +80,7 @@ export default function PmcMap({ orbit, field, pixels, clusters }: { orbit: Orbi
       instance.addSource("pmc-clusters", { type: "geojson", data: clusters });
       instance.addLayer({
         id: "residual-field", type: "fill", source: "residual-field",
+        layout: { visibility: "none" },
         paint: {
           "fill-color": ["interpolate", ["linear"], ["get", "detectionScore"], 0, "#150087", .15, "#163ecb", .3, "#008de5", .45, "#00d3c0", .6, "#4ddd4b", .75, "#ffe000", .9, "#ff5500", 1, "#ffffff"],
           "fill-opacity": .82,
@@ -90,7 +91,7 @@ export default function PmcMap({ orbit, field, pixels, clusters }: { orbit: Orbi
         id: "pmc-pixels", type: "fill", source: "pmc-pixels",
         paint: {
           "fill-color": ["interpolate", ["linear"], ["get", "detectionScore"], 0, "#1600a8", .2, "#006cff", .4, "#00d8d2", .6, "#4ee329", .75, "#ffe600", .9, "#ff5600", 1, "#a80000"],
-          "fill-opacity": 0,
+          "fill-opacity": 0.88,
           "fill-outline-color": ["interpolate", ["linear"], ["get", "detectionScore"], 0, "#1600a8", .5, "#20d080", 1, "#a80000"],
         },
       });
