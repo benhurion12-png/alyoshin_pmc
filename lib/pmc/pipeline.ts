@@ -66,7 +66,7 @@ export function detectPmc(input: PmcInput): ProcessingResult {
   };
   const base = (i: number, count: number) => {
     const snr = residuals[0][i] / Math.max(threshold[i] / settings.noiseMultiplier, 1e-20);
-    const score = Math.max(0, Math.min(1, residuals[0][i] / 35e-6));
+    const score = Math.max(0, Math.min(1, residuals[0][i] / 60e-6));
     let normalizedResidual = residuals[0][i];
     if (input.viewingZenith && input.solarAzimuth && input.viewingAzimuth) {
       const toRadians = Math.PI / 180;

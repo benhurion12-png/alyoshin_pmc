@@ -60,8 +60,12 @@ const dailyGrid = (features: ProcessingResult["pixels"]["features"]) => {
     }));
 };
 
-const mergeProcessingResult = (current: ProcessingResult | null, next: ProcessingResult): ProcessingResult => {
-  if (!current) return { ...next, pixels: { ...next.pixels, features: dailyGrid(next.pixels.features) }, metadata: { ...next.metadata, orbitCount: 1, sourceFiles: [next.metadata.sourceFile].filter(Boolean), dailyGridKm: DAILY_GRID_KM } };
+const mergeProcessingResult = (current: ProcessingResult | null, next: ProcessingResult, daily: boolean): ProcessingResult => {
+  if (!current && !daily) return {
+    ...next,
+    metadata: { ...next.metadata, orbitCount: 1, sourceFiles: [next.metadata.sourceFile].filter(Boolean), displayMode: "single-orbit-native-bins" },
+  };
+  if (!current) return { ...next, pixels: { ...next.pixels, features: dailyGrid(next.pixels.features) }, metadata: { ...next.metadata, orbitCount: 1, sourceFiles: [next.metadata.sourceFile].filter(Boolean), dailyGridKm: DAILY_GRID_KM, displayMode: "daily-7.5-km-grid" } };
   const clusterOffset = current.clusters.features.length;
   return {
     orbit: { type: "FeatureCollection", features: [...current.orbit.features, ...next.orbit.features] },
@@ -119,7 +123,7 @@ export default function Explorer() {
           setResult(message.result); setOrbit(message.result.orbit); setBusy(false); setProgress({ stage: "Обработка завершена", percent: 100 });
           return;
         }
-        activeBatch.aggregate = mergeProcessingResult(activeBatch.aggregate, message.result);
+        activeBatch.aggregate = mergeProcessingResult(activeBatch.aggregate, message.result, activeBatch.files.length > 1);
         activeBatch.index++;
         if (activeBatch.index < activeBatch.files.length) {
           const next = activeBatch.files[activeBatch.index];
@@ -207,7 +211,7 @@ export default function Explorer() {
           </div>
           {mapMode === "maplibre"
             ? <PmcMap key={String(result?.metadata.processedAt ?? "empty")} orbit={orbit} pixels={result?.pixels ?? null} clusters={result?.clusters ?? null} />
-            : <PolarMap pixels={result?.pixels ?? null} />}
+            : <PolarMap pixels={result?.pixels ?? null} singleOrbit={Number(result?.metadata.orbitCount ?? 0) === 1} />}
           <div className="map-status quality-legend"><span><i className="quality low" />0</span><span><i className="quality medium" />0,5</span><span><i className="quality high" />1,0</span><em>NORMALIZED RESIDUAL ALBEDO · 283 NM</em></div>
           {result ? <div className="result-strip">
             <div><b>{result.pixels.features.length}</b><span>пикселей</span></div><div><b>{result.clusters.features.length}</b><span>кластеров</span></div>

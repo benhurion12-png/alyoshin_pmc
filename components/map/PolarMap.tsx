@@ -9,14 +9,14 @@ import type { PmcPointCollection } from "@/types/processing";
 type WorldTopology = Parameters<typeof feature>[0];
 const color = (value: number) => value >= .9 ? "#a80000" : value >= .75 ? "#ff9d00" : value >= .6 ? "#ffe600" : value >= .4 ? "#35db61" : value >= .2 ? "#00bde8" : "#1648d8";
 
-export default function PolarMap({ pixels }: { pixels: PmcPointCollection | null }) {
+export default function PolarMap({ pixels, singleOrbit = false }: { pixels: PmcPointCollection | null; singleOrbit?: boolean }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const width = 900, height = 720;
   const { landPath, graticulePath, pixelPaths, projection } = useMemo(() => {
     const projection = geoStereographic()
       .rotate([0, -90])
-      .clipAngle(40)
-      .scale(900)
+      .clipAngle(singleOrbit ? 20 : 40)
+      .scale(singleOrbit ? 1860 : 900)
       .translate([width / 2, height / 2]);
     const path = geoPath(projection);
     const topology = world as unknown as { objects: { countries: Parameters<typeof feature>[1] } };
@@ -39,7 +39,7 @@ export default function PolarMap({ pixels }: { pixels: PmcPointCollection | null
         value: pixels?.features[index].properties.detectionScore ?? 0,
       })),
     };
-  }, [pixels]);
+  }, [pixels, singleOrbit]);
 
   const download = (format: "svg" | "png") => {
     const svg = svgRef.current; if (!svg) return;
@@ -74,7 +74,7 @@ export default function PolarMap({ pixels }: { pixels: PmcPointCollection | null
         {pixelPaths.map((item, index) => <path key={index} d={item.d} fill={color(item.value)} stroke={color(item.value)} strokeWidth=".7" opacity=".92" />)}
         {pole ? <circle cx={pole[0]} cy={pole[1]} r="3" fill="#ffffff" /> : null}
         <text x="28" y="38" fill="#78e8ef" fontFamily="monospace" fontSize="15" letterSpacing="3">NORTH POLAR STEREOGRAPHIC · PMC</text>
-        <text x="28" y={height - 25} fill="#8299a6" fontFamily="monospace" fontSize="11">50°N–90°N · LONGITUDE RADIAL</text>
+        <text x="28" y={height - 25} fill="#8299a6" fontFamily="monospace" fontSize="11">{singleOrbit ? "70°N–90°N · NATIVE 2×2 / 2×3 BINS" : "50°N–90°N · DAILY 7.5 KM GRID"}</text>
       </svg>
       <div className="map-export"><button onClick={() => download("png")}>↓ PNG</button><button onClick={() => download("svg")}>↓ SVG</button></div>
     </div>
