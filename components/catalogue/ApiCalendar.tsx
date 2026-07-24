@@ -21,10 +21,9 @@ export default function ApiCalendar() {
     setLoading(true); setError(""); setProducts([]);
     try {
       const end = new Date(`${date}T00:00:00.000Z`); end.setUTCDate(end.getUTCDate() + 1);
-      const common = `Collection/Name eq 'SENTINEL-5P' and ContentDate/Start ge ${date}T00:00:00.000Z and ContentDate/Start lt ${end.toISOString()}`;
-      const load = async (prefix: string) => {
+      const load = async (prefix: string, start = `${date}T00:00:00.000Z`, finish = end.toISOString()) => {
         const query = new URLSearchParams({
-          "$filter": `${common} and startswith(Name,'${prefix}')`,
+          "$filter": `Collection/Name eq 'SENTINEL-5P' and ContentDate/Start ge ${start} and ContentDate/Start lt ${finish} and startswith(Name,'${prefix}')`,
           "$select": "Id,Name,ContentLength,ContentDate",
           "$orderby": "ContentDate/Start asc",
           "$top": "100",
@@ -33,10 +32,16 @@ export default function ApiCalendar() {
         if (!response.ok) throw new Error(`Каталог CDSE ответил ${response.status}`);
         return (await response.json()).value as CatalogueProduct[];
       };
-      const [radiance, irradiance] = await Promise.all([
+      const irradianceStart = new Date(`${date}T00:00:00.000Z`); irradianceStart.setUTCDate(irradianceStart.getUTCDate() - 2);
+      const irradianceEnd = new Date(`${date}T00:00:00.000Z`); irradianceEnd.setUTCDate(irradianceEnd.getUTCDate() + 3);
+      const [radiance, irradianceCandidates] = await Promise.all([
         load("S5P_OFFL_L1B_RA_BD1_"),
-        load("S5P_OFFL_L1B_IR_UVN_"),
+        load("S5P_OFFL_L1B_IR_UVN_", irradianceStart.toISOString(), irradianceEnd.toISOString()),
       ]);
+      const targetTime = new Date(`${date}T12:00:00.000Z`).getTime();
+      const irradiance = irradianceCandidates
+        .sort((a, b) => Math.abs(new Date(a.ContentDate.Start).getTime() - targetTime) - Math.abs(new Date(b.ContentDate.Start).getTime() - targetTime))
+        .slice(0, 1);
       setProducts([...radiance, ...irradiance]);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));

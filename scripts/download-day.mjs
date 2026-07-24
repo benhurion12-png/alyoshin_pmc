@@ -55,11 +55,11 @@ async function validToken() {
   return accessToken;
 }
 
-async function searchProducts(productPrefix) {
+async function searchProducts(productPrefix, start = dayStart, end = dayEnd.toISOString()) {
   const filter = [
     "Collection/Name eq 'SENTINEL-5P'",
-    `ContentDate/Start ge ${dayStart}`,
-    `ContentDate/Start lt ${dayEnd.toISOString()}`,
+    `ContentDate/Start ge ${start}`,
+    `ContentDate/Start lt ${end}`,
     `startswith(Name,'${productPrefix}')`,
   ].join(" and ");
   const query = new URLSearchParams({
@@ -103,10 +103,18 @@ async function download(product, position, total) {
 }
 
 try {
-  const [radiance, irradiance] = await Promise.all([
+  const irradianceStart = new Date(`${date}T00:00:00.000Z`);
+  irradianceStart.setUTCDate(irradianceStart.getUTCDate() - 2);
+  const irradianceEnd = new Date(`${date}T00:00:00.000Z`);
+  irradianceEnd.setUTCDate(irradianceEnd.getUTCDate() + 3);
+  const [radiance, irradianceCandidates] = await Promise.all([
     searchProducts("S5P_OFFL_L1B_RA_BD1_"),
-    searchProducts("S5P_OFFL_L1B_IR_UVN_"),
+    searchProducts("S5P_OFFL_L1B_IR_UVN_", irradianceStart.toISOString(), irradianceEnd.toISOString()),
   ]);
+  const targetTime = new Date(`${date}T12:00:00.000Z`).getTime();
+  const irradiance = irradianceCandidates
+    .sort((a, b) => Math.abs(new Date(a.ContentDate.Start).getTime() - targetTime) - Math.abs(new Date(b.ContentDate.Start).getTime() - targetTime))
+    .slice(0, 1);
   const products = [...radiance, ...irradiance];
   console.log(`Found ${radiance.length} RA_BD1 and ${irradiance.length} IR_UVN products for ${date}.`);
   if (!products.length) process.exit(2);
