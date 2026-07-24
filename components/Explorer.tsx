@@ -140,6 +140,9 @@ export default function Explorer() {
     aggregate: ProcessingResult | null;
     allCandidateUnion: ProjectedMultiPolygon | null;
     coherentPmcUnion: ProjectedMultiPolygon | null;
+    coherentLowUnion: ProjectedMultiPolygon | null;
+    coherentMediumUnion: ProjectedMultiPolygon | null;
+    coherentHighUnion: ProjectedMultiPolygon | null;
     nativeCandidateCount: number;
     coherentNativeCount: number;
     settings: ProcessingSettings;
@@ -164,8 +167,14 @@ export default function Explorer() {
           return;
         }
         const coherent = message.result.pixels.features.filter((feature) => feature.properties.pixelCount >= 3);
+        const coherentLow = coherent.filter((feature) => feature.properties.residual < 10e-6);
+        const coherentMedium = coherent.filter((feature) => feature.properties.residual >= 10e-6 && feature.properties.residual < 20e-6);
+        const coherentHigh = coherent.filter((feature) => feature.properties.residual >= 20e-6);
         activeBatch.allCandidateUnion = unionPmcFootprints(activeBatch.allCandidateUnion, message.result.pixels.features);
         activeBatch.coherentPmcUnion = unionPmcFootprints(activeBatch.coherentPmcUnion, coherent);
+        activeBatch.coherentLowUnion = unionPmcFootprints(activeBatch.coherentLowUnion, coherentLow);
+        activeBatch.coherentMediumUnion = unionPmcFootprints(activeBatch.coherentMediumUnion, coherentMedium);
+        activeBatch.coherentHighUnion = unionPmcFootprints(activeBatch.coherentHighUnion, coherentHigh);
         activeBatch.nativeCandidateCount += message.result.pixels.features.length;
         activeBatch.coherentNativeCount += coherent.length;
         activeBatch.aggregate = mergeProcessingResult(activeBatch.aggregate, message.result, activeBatch.files.length > 1);
@@ -178,6 +187,9 @@ export default function Explorer() {
           const complete = activeBatch.aggregate;
           const allCandidateAreaKm2 = multiPolygonAreaKm2(activeBatch.allCandidateUnion);
           const coherentPmcAreaKm2 = multiPolygonAreaKm2(activeBatch.coherentPmcUnion);
+          const coherentLowAreaKm2 = multiPolygonAreaKm2(activeBatch.coherentLowUnion);
+          const coherentMediumAreaKm2 = multiPolygonAreaKm2(activeBatch.coherentMediumUnion);
+          const coherentHighAreaKm2 = multiPolygonAreaKm2(activeBatch.coherentHighUnion);
           batch.current = null;
           if (complete) {
             const withArea = {
@@ -186,6 +198,9 @@ export default function Explorer() {
                 ...complete.metadata,
                 physicalPmcFootprintAreaKm2: coherentPmcAreaKm2,
                 allCandidateFootprintAreaKm2: allCandidateAreaKm2,
+                coherentLowFootprintAreaKm2: coherentLowAreaKm2,
+                coherentMediumFootprintAreaKm2: coherentMediumAreaKm2,
+                coherentHighFootprintAreaKm2: coherentHighAreaKm2,
                 nativeCandidateCount: activeBatch.nativeCandidateCount,
                 coherentNativeCount: activeBatch.coherentNativeCount,
                 isolatedNativeCount: activeBatch.nativeCandidateCount - activeBatch.coherentNativeCount,
@@ -210,29 +225,25 @@ export default function Explorer() {
   const areaStats = useMemo(() => {
     if (!result) return null;
     const gridKm = Number(result.metadata.dailyGridKm);
-    // Daily pixels have already been de-duplicated by their 50 km grid key.
-    // Native binned TROPOMI footprints are approximately 24 km² in this MVP.
+    // This value is only the Figure 10 comparison-grid coverage. It is never
+    // used for the physical native-footprint areas below.
     const cellAreaKm2 = Number.isFinite(gridKm) && gridKm > 0 ? gridKm ** 2 : 24;
     const gridCoverageKm2 = result.pixels.features.length * cellAreaKm2;
     const measuredPhysicalAreaKm2 = Number(result.metadata.physicalPmcFootprintAreaKm2);
     const physicalAreaKm2 = Number.isFinite(measuredPhysicalAreaKm2) ? measuredPhysicalAreaKm2 : gridCoverageKm2;
     const upperCandidateAreaKm2 = Number(result.metadata.allCandidateFootprintAreaKm2);
     const observedCells = result.field.features.length;
-    const areaFor = (predicate: (residual: number) => boolean) =>
-      result.pixels.features.filter((feature) => predicate(feature.properties.residual)).length * cellAreaKm2;
     return {
-      cellAreaKm2,
       gridCoverageKm2,
       physicalAreaKm2,
       upperCandidateAreaKm2: Number.isFinite(upperCandidateAreaKm2) ? upperCandidateAreaKm2 : physicalAreaKm2,
       occurrencePercent: observedCells ? result.pixels.features.length / observedCells * 100 : 0,
       observedCells,
       isolatedNativeCount: Number(result.metadata.isolatedNativeCount ?? 0),
-      lowAreaKm2: areaFor((value) => value < 10e-6),
-      mediumAreaKm2: areaFor((value) => value >= 10e-6 && value < 20e-6),
-      highAreaKm2: areaFor((value) => value >= 20e-6),
+      lowAreaKm2: Number(result.metadata.coherentLowFootprintAreaKm2 ?? 0),
+      mediumAreaKm2: Number(result.metadata.coherentMediumFootprintAreaKm2 ?? 0),
+      highAreaKm2: Number(result.metadata.coherentHighFootprintAreaKm2 ?? 0),
       polarCapFraction: physicalAreaKm2 / POLAR_CAP_50N_KM2 * 100,
-      daily: Number.isFinite(gridKm) && gridKm > 0,
     };
   }, [result]);
   const choose = (next: File[]) => {
@@ -251,6 +262,7 @@ export default function Explorer() {
     batch.current = {
       files, irradianceFile, index: 0, aggregate: null,
       allCandidateUnion: null, coherentPmcUnion: null,
+      coherentLowUnion: null, coherentMediumUnion: null, coherentHighUnion: null,
       nativeCandidateCount: 0, coherentNativeCount: 0, settings,
     };
     setProgress({ stage: `Орбита 1/${files.length} · ${files[0].name}`, percent: 0 });
@@ -321,7 +333,7 @@ export default function Explorer() {
             <div><span>PMC OCCURRENCE В НАБЛЮДЕНИЯХ</span><b>{areaStats.occurrencePercent.toFixed(2)}%</b></div>
             <div><span>НАБЛЮДАВШИЕСЯ ЯЧЕЙКИ / ОДИНОЧНЫЕ BINS</span><b>{areaStats.observedCells} / {areaStats.isolatedNativeCount}</b></div>
             <div><span>ПОКРЫТИЕ ЯЧЕЕК 50 КМ</span><b>{formatArea(areaStats.gridCoverageKm2)} км²</b></div>
-            <div><span>СЛАБЫЕ / СРЕДНИЕ / ЯРКИЕ</span><b>{formatArea(areaStats.lowAreaKm2)} / {formatArea(areaStats.mediumAreaKm2)} / {formatArea(areaStats.highAreaKm2)} км²</b></div>
+            <div><span>NATIVE FOOTPRINT: СЛАБЫЕ / СРЕДНИЕ / ЯРКИЕ</span><b>{formatArea(areaStats.lowAreaKm2)} / {formatArea(areaStats.mediumAreaKm2)} / {formatArea(areaStats.highAreaKm2)} км²</b></div>
             <div><span>ДОЛЯ ЗОНЫ 50–90°N</span><b>{areaStats.polarCapFraction.toFixed(2)}%</b></div>
             <div><span>МЕТОД ПЛОЩАДИ</span><b>UNION NATIVE FOOTPRINTS</b></div>
             <p>
