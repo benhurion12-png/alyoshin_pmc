@@ -138,7 +138,10 @@ export default function Explorer() {
     irradianceFile: File | null;
     index: number;
     aggregate: ProcessingResult | null;
-    nativePmcUnion: ProjectedMultiPolygon | null;
+    allCandidateUnion: ProjectedMultiPolygon | null;
+    coherentPmcUnion: ProjectedMultiPolygon | null;
+    nativeCandidateCount: number;
+    coherentNativeCount: number;
     settings: ProcessingSettings;
   } | null>(null);
 
@@ -160,7 +163,11 @@ export default function Explorer() {
           setResult(message.result); setOrbit(message.result.orbit); setBusy(false); setProgress({ stage: "Обработка завершена", percent: 100 });
           return;
         }
-        activeBatch.nativePmcUnion = unionPmcFootprints(activeBatch.nativePmcUnion, message.result.pixels.features);
+        const coherent = message.result.pixels.features.filter((feature) => feature.properties.pixelCount >= 3);
+        activeBatch.allCandidateUnion = unionPmcFootprints(activeBatch.allCandidateUnion, message.result.pixels.features);
+        activeBatch.coherentPmcUnion = unionPmcFootprints(activeBatch.coherentPmcUnion, coherent);
+        activeBatch.nativeCandidateCount += message.result.pixels.features.length;
+        activeBatch.coherentNativeCount += coherent.length;
         activeBatch.aggregate = mergeProcessingResult(activeBatch.aggregate, message.result, activeBatch.files.length > 1);
         activeBatch.index++;
         if (activeBatch.index < activeBatch.files.length) {
@@ -169,14 +176,20 @@ export default function Explorer() {
           worker.current?.postMessage({ type: "PROCESS", radianceFile: next, irradianceFile: activeBatch.irradianceFile ?? undefined, settings: activeBatch.settings });
         } else {
           const complete = activeBatch.aggregate;
-          const physicalAreaKm2 = multiPolygonAreaKm2(activeBatch.nativePmcUnion);
+          const allCandidateAreaKm2 = multiPolygonAreaKm2(activeBatch.allCandidateUnion);
+          const coherentPmcAreaKm2 = multiPolygonAreaKm2(activeBatch.coherentPmcUnion);
           batch.current = null;
           if (complete) {
             const withArea = {
               ...complete,
               metadata: {
                 ...complete.metadata,
-                physicalPmcFootprintAreaKm2: physicalAreaKm2,
+                physicalPmcFootprintAreaKm2: coherentPmcAreaKm2,
+                allCandidateFootprintAreaKm2: allCandidateAreaKm2,
+                nativeCandidateCount: activeBatch.nativeCandidateCount,
+                coherentNativeCount: activeBatch.coherentNativeCount,
+                isolatedNativeCount: activeBatch.nativeCandidateCount - activeBatch.coherentNativeCount,
+                coherentClusterMinimumBins: 3,
                 physicalAreaMethod: "union-native-binned-footprints-north-lambert-equal-area",
               },
             };
@@ -203,12 +216,18 @@ export default function Explorer() {
     const gridCoverageKm2 = result.pixels.features.length * cellAreaKm2;
     const measuredPhysicalAreaKm2 = Number(result.metadata.physicalPmcFootprintAreaKm2);
     const physicalAreaKm2 = Number.isFinite(measuredPhysicalAreaKm2) ? measuredPhysicalAreaKm2 : gridCoverageKm2;
+    const upperCandidateAreaKm2 = Number(result.metadata.allCandidateFootprintAreaKm2);
+    const observedCells = result.field.features.length;
     const areaFor = (predicate: (residual: number) => boolean) =>
       result.pixels.features.filter((feature) => predicate(feature.properties.residual)).length * cellAreaKm2;
     return {
       cellAreaKm2,
       gridCoverageKm2,
       physicalAreaKm2,
+      upperCandidateAreaKm2: Number.isFinite(upperCandidateAreaKm2) ? upperCandidateAreaKm2 : physicalAreaKm2,
+      occurrencePercent: observedCells ? result.pixels.features.length / observedCells * 100 : 0,
+      observedCells,
+      isolatedNativeCount: Number(result.metadata.isolatedNativeCount ?? 0),
       lowAreaKm2: areaFor((value) => value < 10e-6),
       mediumAreaKm2: areaFor((value) => value >= 10e-6 && value < 20e-6),
       highAreaKm2: areaFor((value) => value >= 20e-6),
@@ -229,7 +248,11 @@ export default function Explorer() {
   const process = () => {
     if (!files.length) return;
     setBusy(true); setError(""); setResult(null); setOrbit(null);
-    batch.current = { files, irradianceFile, index: 0, aggregate: null, nativePmcUnion: null, settings };
+    batch.current = {
+      files, irradianceFile, index: 0, aggregate: null,
+      allCandidateUnion: null, coherentPmcUnion: null,
+      nativeCandidateCount: 0, coherentNativeCount: 0, settings,
+    };
     setProgress({ stage: `Орбита 1/${files.length} · ${files[0].name}`, percent: 0 });
     worker.current?.postMessage({ type: "PROCESS", radianceFile: files[0], irradianceFile: irradianceFile ?? undefined, settings });
   };
@@ -293,15 +316,18 @@ export default function Explorer() {
             <button onClick={() => download(result.field, "residual-field.geojson")}>RESIDUAL FIELD ↓</button><button onClick={() => download(result.pixels, "pmc-pixels.geojson")}>PMC MASK ↓</button><button onClick={() => download(result.clusters, "pmc-clusters.geojson")}>PMC CLUSTERS ↓</button><button onClick={() => download(result.metadata, "metadata.json")}>METADATA ↓</button>
           </div> : null}
           {areaStats ? <div className="area-summary">
-            <div><span>ОЦЕНОЧНАЯ ФИЗИЧЕСКАЯ ПЛОЩАДЬ PMC</span><b>{formatArea(areaStats.physicalAreaKm2)} км²</b></div>
+            <div><span>ПЛОЩАДЬ УСТОЙЧИВЫХ PMC (≥3 BINS)</span><b>{formatArea(areaStats.physicalAreaKm2)} км²</b></div>
+            <div><span>ВЕРХНЯЯ ОЦЕНКА ВСЕХ КАНДИДАТОВ</span><b>{formatArea(areaStats.upperCandidateAreaKm2)} км²</b></div>
+            <div><span>PMC OCCURRENCE В НАБЛЮДЕНИЯХ</span><b>{areaStats.occurrencePercent.toFixed(2)}%</b></div>
+            <div><span>НАБЛЮДАВШИЕСЯ ЯЧЕЙКИ / ОДИНОЧНЫЕ BINS</span><b>{areaStats.observedCells} / {areaStats.isolatedNativeCount}</b></div>
             <div><span>ПОКРЫТИЕ ЯЧЕЕК 50 КМ</span><b>{formatArea(areaStats.gridCoverageKm2)} км²</b></div>
             <div><span>СЛАБЫЕ / СРЕДНИЕ / ЯРКИЕ</span><b>{formatArea(areaStats.lowAreaKm2)} / {formatArea(areaStats.mediumAreaKm2)} / {formatArea(areaStats.highAreaKm2)} км²</b></div>
             <div><span>ДОЛЯ ЗОНЫ 50–90°N</span><b>{areaStats.polarCapFraction.toFixed(2)}%</b></div>
             <div><span>МЕТОД ПЛОЩАДИ</span><b>UNION NATIVE FOOTPRINTS</b></div>
             <p>
-              Физическая площадь рассчитана по углам исходных binned-пикселей до сетки 50 км в равновеликой
-              проекции; пересечения орбит учитываются один раз. Это площадь footprint-пикселей с PMC, а не
-              субпиксельная граница облака. Универсального «среднего мирового» значения нет.
+              Основная площадь использует только связные компоненты минимум из трёх исходных bins. Верхняя
+              оценка включает одиночные спектральные кандидаты. Геометрия считается до сетки 50 км по углам
+              footprint в равновеликой проекции, а пересечения орбит учитываются один раз.
             </p>
           </div> : null}
           {result?.warnings.map((warning) => <div className="warning" key={warning}>{warning}</div>)}

@@ -1,6 +1,6 @@
 import polygonClipping from "polygon-clipping";
 import type { MultiPolygon, Pair, Polygon } from "polygon-clipping";
-import type { PmcPointCollection } from "@/types/processing";
+import type { PmcPointCollection, ResidualFieldCollection } from "@/types/processing";
 
 export type ProjectedMultiPolygon = MultiPolygon;
 
@@ -52,7 +52,7 @@ export function multiPolygonAreaKm2(multiPolygon: ProjectedMultiPolygon | null) 
 
 export function unionPmcFootprints(
   current: ProjectedMultiPolygon | null,
-  features: PmcPointCollection["features"],
+  features: PmcPointCollection["features"] | ResidualFieldCollection["features"],
 ) {
   const polygons: Polygon[] = [];
   for (const feature of features) {

@@ -128,7 +128,7 @@ export function detectPmc(input: PmcInput): ProcessingResult {
     return ring;
   };
   for (let i = 0; i < valid.length; i++) {
-    if (!valid[i] || !Number.isFinite(residuals[0][i]) || residuals[0][i] <= 0) continue;
+    if (!valid[i] || !Number.isFinite(residuals[0][i])) continue;
     const ring = ringFor(i);
     if (ring) fieldFeatures.push({
       type: "Feature",
