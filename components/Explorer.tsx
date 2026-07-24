@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import DatasetTree from "@/components/inspection/DatasetTree";
 import ApiCalendar from "@/components/catalogue/ApiCalendar";
+import { multiPolygonAreaKm2, unionPmcFootprints, type ProjectedMultiPolygon } from "@/lib/geo/pmc-area";
 import type { InspectionResult, OrbitGeoJson } from "@/types/netcdf";
 import type { WorkerResponse } from "@/types/worker";
 import { DEFAULT_SETTINGS, type ProcessingResult, type ProcessingSettings } from "@/types/processing";
@@ -132,7 +133,14 @@ export default function Explorer() {
   const [error, setError] = useState("");
   const worker = useRef<Worker | null>(null);
   const input = useRef<HTMLInputElement>(null);
-  const batch = useRef<{ files: File[]; irradianceFile: File | null; index: number; aggregate: ProcessingResult | null; settings: ProcessingSettings } | null>(null);
+  const batch = useRef<{
+    files: File[];
+    irradianceFile: File | null;
+    index: number;
+    aggregate: ProcessingResult | null;
+    nativePmcUnion: ProjectedMultiPolygon | null;
+    settings: ProcessingSettings;
+  } | null>(null);
 
   useEffect(() => {
     worker.current = new Worker(new URL("../workers/tropomi.worker.ts", import.meta.url), { type: "module" });
@@ -152,6 +160,7 @@ export default function Explorer() {
           setResult(message.result); setOrbit(message.result.orbit); setBusy(false); setProgress({ stage: "Обработка завершена", percent: 100 });
           return;
         }
+        activeBatch.nativePmcUnion = unionPmcFootprints(activeBatch.nativePmcUnion, message.result.pixels.features);
         activeBatch.aggregate = mergeProcessingResult(activeBatch.aggregate, message.result, activeBatch.files.length > 1);
         activeBatch.index++;
         if (activeBatch.index < activeBatch.files.length) {
@@ -160,8 +169,20 @@ export default function Explorer() {
           worker.current?.postMessage({ type: "PROCESS", radianceFile: next, irradianceFile: activeBatch.irradianceFile ?? undefined, settings: activeBatch.settings });
         } else {
           const complete = activeBatch.aggregate;
+          const physicalAreaKm2 = multiPolygonAreaKm2(activeBatch.nativePmcUnion);
           batch.current = null;
-          if (complete) { setResult(complete); setOrbit(complete.orbit); }
+          if (complete) {
+            const withArea = {
+              ...complete,
+              metadata: {
+                ...complete.metadata,
+                physicalPmcFootprintAreaKm2: physicalAreaKm2,
+                physicalAreaMethod: "union-native-binned-footprints-north-lambert-equal-area",
+              },
+            };
+            setResult(withArea);
+            setOrbit(withArea.orbit);
+          }
           setBusy(false); setProgress({ stage: `Суточная мозаика: обработано ${activeBatch.files.length} орбит`, percent: 100 });
         }
       }
@@ -179,16 +200,19 @@ export default function Explorer() {
     // Daily pixels have already been de-duplicated by their 50 km grid key.
     // Native binned TROPOMI footprints are approximately 24 km² in this MVP.
     const cellAreaKm2 = Number.isFinite(gridKm) && gridKm > 0 ? gridKm ** 2 : 24;
-    const detectedAreaKm2 = result.pixels.features.length * cellAreaKm2;
+    const gridCoverageKm2 = result.pixels.features.length * cellAreaKm2;
+    const measuredPhysicalAreaKm2 = Number(result.metadata.physicalPmcFootprintAreaKm2);
+    const physicalAreaKm2 = Number.isFinite(measuredPhysicalAreaKm2) ? measuredPhysicalAreaKm2 : gridCoverageKm2;
     const areaFor = (predicate: (residual: number) => boolean) =>
       result.pixels.features.filter((feature) => predicate(feature.properties.residual)).length * cellAreaKm2;
     return {
       cellAreaKm2,
-      detectedAreaKm2,
+      gridCoverageKm2,
+      physicalAreaKm2,
       lowAreaKm2: areaFor((value) => value < 10e-6),
       mediumAreaKm2: areaFor((value) => value >= 10e-6 && value < 20e-6),
       highAreaKm2: areaFor((value) => value >= 20e-6),
-      polarCapFraction: detectedAreaKm2 / POLAR_CAP_50N_KM2 * 100,
+      polarCapFraction: physicalAreaKm2 / POLAR_CAP_50N_KM2 * 100,
       daily: Number.isFinite(gridKm) && gridKm > 0,
     };
   }, [result]);
@@ -205,7 +229,7 @@ export default function Explorer() {
   const process = () => {
     if (!files.length) return;
     setBusy(true); setError(""); setResult(null); setOrbit(null);
-    batch.current = { files, irradianceFile, index: 0, aggregate: null, settings };
+    batch.current = { files, irradianceFile, index: 0, aggregate: null, nativePmcUnion: null, settings };
     setProgress({ stage: `Орбита 1/${files.length} · ${files[0].name}`, percent: 0 });
     worker.current?.postMessage({ type: "PROCESS", radianceFile: files[0], irradianceFile: irradianceFile ?? undefined, settings });
   };
@@ -269,14 +293,15 @@ export default function Explorer() {
             <button onClick={() => download(result.field, "residual-field.geojson")}>RESIDUAL FIELD ↓</button><button onClick={() => download(result.pixels, "pmc-pixels.geojson")}>PMC MASK ↓</button><button onClick={() => download(result.clusters, "pmc-clusters.geojson")}>PMC CLUSTERS ↓</button><button onClick={() => download(result.metadata, "metadata.json")}>METADATA ↓</button>
           </div> : null}
           {areaStats ? <div className="area-summary">
-            <div><span>ПОКРЫТИЕ PMC-ЯЧЕЕК (НЕ ФИЗ. ПЛОЩАДЬ)</span><b>{formatArea(areaStats.detectedAreaKm2)} км²</b></div>
+            <div><span>ОЦЕНОЧНАЯ ФИЗИЧЕСКАЯ ПЛОЩАДЬ PMC</span><b>{formatArea(areaStats.physicalAreaKm2)} км²</b></div>
+            <div><span>ПОКРЫТИЕ ЯЧЕЕК 50 КМ</span><b>{formatArea(areaStats.gridCoverageKm2)} км²</b></div>
             <div><span>СЛАБЫЕ / СРЕДНИЕ / ЯРКИЕ</span><b>{formatArea(areaStats.lowAreaKm2)} / {formatArea(areaStats.mediumAreaKm2)} / {formatArea(areaStats.highAreaKm2)} км²</b></div>
             <div><span>ДОЛЯ ЗОНЫ 50–90°N</span><b>{areaStats.polarCapFraction.toFixed(2)}%</b></div>
-            <div><span>МЕТОД ПЛОЩАДИ</span><b>{areaStats.daily ? "ЯЧЕЙКИ 50×50 КМ" : `≈ ${areaStats.cellAreaKm2} КМ² / BIN`}</b></div>
+            <div><span>МЕТОД ПЛОЩАДИ</span><b>UNION NATIVE FOOTPRINTS</b></div>
             <p>
-              Это площадь уникальных обнаруженных ячеек в покрытии TROPOMI. Она не равна полной площади PMC
-              полушария. Универсального «среднего мирового» значения нет: научные климатологии обычно
-              сравнивают частоту появления при одинаковом спутниковом покрытии и пороге.
+              Физическая площадь рассчитана по углам исходных binned-пикселей до сетки 50 км в равновеликой
+              проекции; пересечения орбит учитываются один раз. Это площадь footprint-пикселей с PMC, а не
+              субпиксельная граница облака. Универсального «среднего мирового» значения нет.
             </p>
           </div> : null}
           {result?.warnings.map((warning) => <div className="warning" key={warning}>{warning}</div>)}

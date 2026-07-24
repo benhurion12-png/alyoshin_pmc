@@ -17,6 +17,7 @@
     "h5wasm": "^0.10.1",
     "maplibre-gl": "^5.6.1",
     "next": "^15.4.4",
+    "polygon-clipping": "^0.15.7",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "topojson-client": "^3.1.0",
