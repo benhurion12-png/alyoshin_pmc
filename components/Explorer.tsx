@@ -16,6 +16,8 @@ const EARTH_RADIUS_KM = 6371;
 // values are normalized by a fixed 30 × 10⁻⁶ sr⁻¹ reference.
 const DAILY_GRID_KM = 50;
 const FIGURE_10_TROPOMI_SCALE = 30e-6;
+const POLAR_CAP_50N_KM2 = 2 * Math.PI * EARTH_RADIUS_KM ** 2 * (1 - Math.sin(50 * Math.PI / 180));
+const formatArea = (areaKm2: number) => new Intl.NumberFormat("ru", { maximumFractionDigits: 0 }).format(areaKm2);
 
 const projectNorth = ([longitude, latitude]: [number, number]) => {
   const lambda = longitude * Math.PI / 180;
@@ -171,6 +173,25 @@ export default function Explorer() {
 
   const lat = useMemo(() => inspection?.candidates.find((c) => c.semanticType === "latitude"), [inspection]);
   const lon = useMemo(() => inspection?.candidates.find((c) => c.semanticType === "longitude"), [inspection]);
+  const areaStats = useMemo(() => {
+    if (!result) return null;
+    const gridKm = Number(result.metadata.dailyGridKm);
+    // Daily pixels have already been de-duplicated by their 50 km grid key.
+    // Native binned TROPOMI footprints are approximately 24 km² in this MVP.
+    const cellAreaKm2 = Number.isFinite(gridKm) && gridKm > 0 ? gridKm ** 2 : 24;
+    const detectedAreaKm2 = result.pixels.features.length * cellAreaKm2;
+    const areaFor = (predicate: (residual: number) => boolean) =>
+      result.pixels.features.filter((feature) => predicate(feature.properties.residual)).length * cellAreaKm2;
+    return {
+      cellAreaKm2,
+      detectedAreaKm2,
+      lowAreaKm2: areaFor((value) => value < 10e-6),
+      mediumAreaKm2: areaFor((value) => value >= 10e-6 && value < 20e-6),
+      highAreaKm2: areaFor((value) => value >= 20e-6),
+      polarCapFraction: detectedAreaKm2 / POLAR_CAP_50N_KM2 * 100,
+      daily: Number.isFinite(gridKm) && gridKm > 0,
+    };
+  }, [result]);
   const choose = (next: File[]) => {
     const radiance = next.filter((item) => item.name.toLowerCase().endsWith(".nc") && item.name.includes("_RA_BD1_"));
     const irradiance = next.find((item) => item.name.toLowerCase().endsWith(".nc") && item.name.includes("_IR_UVN_")) ?? null;
@@ -246,6 +267,17 @@ export default function Explorer() {
             <div><b className="yellow-number">{result.pixels.features.filter((feature) => feature.properties.residual >= 10e-6 && feature.properties.residual < 20e-6).length}</b><span>10–20×10⁻⁶</span></div>
             <div><b className="red-number">{result.pixels.features.filter((feature) => feature.properties.residual >= 20e-6).length}</b><span>≥20×10⁻⁶</span></div>
             <button onClick={() => download(result.field, "residual-field.geojson")}>RESIDUAL FIELD ↓</button><button onClick={() => download(result.pixels, "pmc-pixels.geojson")}>PMC MASK ↓</button><button onClick={() => download(result.clusters, "pmc-clusters.geojson")}>PMC CLUSTERS ↓</button><button onClick={() => download(result.metadata, "metadata.json")}>METADATA ↓</button>
+          </div> : null}
+          {areaStats ? <div className="area-summary">
+            <div><span>ОБНАРУЖЕННАЯ ПЛОЩАДЬ PMC</span><b>{formatArea(areaStats.detectedAreaKm2)} км²</b></div>
+            <div><span>СЛАБЫЕ / СРЕДНИЕ / ЯРКИЕ</span><b>{formatArea(areaStats.lowAreaKm2)} / {formatArea(areaStats.mediumAreaKm2)} / {formatArea(areaStats.highAreaKm2)} км²</b></div>
+            <div><span>ДОЛЯ ЗОНЫ 50–90°N</span><b>{areaStats.polarCapFraction.toFixed(2)}%</b></div>
+            <div><span>МЕТОД ПЛОЩАДИ</span><b>{areaStats.daily ? "ЯЧЕЙКИ 50×50 КМ" : `≈ ${areaStats.cellAreaKm2} КМ² / BIN`}</b></div>
+            <p>
+              Это площадь уникальных обнаруженных ячеек в покрытии TROPOMI. Она не равна полной площади PMC
+              полушария. Универсального «среднего мирового» значения нет: научные климатологии обычно
+              сравнивают частоту появления при одинаковом спутниковом покрытии и пороге.
+            </p>
           </div> : null}
           {result?.warnings.map((warning) => <div className="warning" key={warning}>{warning}</div>)}
         </section>
