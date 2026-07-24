@@ -5,6 +5,7 @@ import type { PmcPointCollection } from "@/types/processing";
 export type ProjectedMultiPolygon = MultiPolygon;
 
 const EARTH_RADIUS_KM = 6371.0088;
+const TOPOLOGY_PRECISION_KM = 0.05;
 
 export function projectNorthEqualArea([longitude, latitude]: [number, number]) {
   const lambda = longitude * Math.PI / 180;
@@ -21,6 +22,24 @@ const signedRingArea = (ring: Pair[]) => {
   return twiceArea / 2;
 };
 
+const cleanRing = (coordinates: number[][]) => {
+  const cleaned: Pair[] = [];
+  for (const [longitude, latitude] of coordinates) {
+    if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) continue;
+    const projected = projectNorthEqualArea([longitude, latitude]);
+    const point: Pair = [
+      Math.round(projected[0] / TOPOLOGY_PRECISION_KM) * TOPOLOGY_PRECISION_KM,
+      Math.round(projected[1] / TOPOLOGY_PRECISION_KM) * TOPOLOGY_PRECISION_KM,
+    ];
+    const previous = cleaned.at(-1);
+    if (!previous || previous[0] !== point[0] || previous[1] !== point[1]) cleaned.push(point);
+  }
+  if (cleaned.length < 3) return null;
+  const first = cleaned[0], last = cleaned.at(-1)!;
+  if (first[0] !== last[0] || first[1] !== last[1]) cleaned.push([...first]);
+  return cleaned.length >= 4 && Math.abs(signedRingArea(cleaned)) > 1e-4 ? cleaned : null;
+};
+
 export function multiPolygonAreaKm2(multiPolygon: ProjectedMultiPolygon | null) {
   if (!multiPolygon) return 0;
   return multiPolygon.reduce((total, polygon) => {
@@ -35,17 +54,30 @@ export function unionPmcFootprints(
   current: ProjectedMultiPolygon | null,
   features: PmcPointCollection["features"],
 ) {
-  const polygons: Polygon[] = features
-    .map((feature) => feature.geometry.coordinates.map((ring) =>
-      ring.map(([longitude, latitude]) => projectNorthEqualArea([longitude, latitude])) as Pair[],
-    ))
-    .filter((polygon) => polygon[0]?.length >= 4);
+  const polygons: Polygon[] = [];
+  for (const feature of features) {
+    const rings = feature.geometry.coordinates.map(cleanRing).filter((ring): ring is Pair[] => Boolean(ring));
+    if (rings[0]?.length >= 4) polygons.push(rings);
+  }
   let merged = current;
-  for (let start = 0; start < polygons.length; start += 250) {
-    const chunk = polygons.slice(start, start + 250);
-    merged = (merged
-      ? polygonClipping.union(merged, ...chunk)
-      : polygonClipping.union(chunk[0], ...chunk.slice(1))) as ProjectedMultiPolygon;
+  for (let start = 0; start < polygons.length; start += 20) {
+    const chunk = polygons.slice(start, start + 20);
+    try {
+      merged = (merged
+        ? polygonClipping.union(merged, ...chunk)
+        : polygonClipping.union(chunk[0], ...chunk.slice(1))) as ProjectedMultiPolygon;
+    } catch {
+      // Near-coincident satellite edges can occasionally defeat the sweep-line
+      // topology builder. Retry one footprint at a time; if one still fails,
+      // preserve it as a separate component rather than crashing the analysis.
+      for (const polygon of chunk) {
+        try {
+          merged = (merged ? polygonClipping.union(merged, polygon) : [polygon]) as ProjectedMultiPolygon;
+        } catch {
+          merged = [...(merged ?? []), polygon];
+        }
+      }
+    }
   }
   return merged;
 }

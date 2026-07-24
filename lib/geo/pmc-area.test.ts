@@ -23,4 +23,13 @@ describe("PMC footprint area", () => {
     expect(multiPolygonAreaKm2(once)).toBeGreaterThan(100);
     expect(multiPolygonAreaKm2(twice)).toBeCloseTo(multiPolygonAreaKm2(once), 6);
   });
+
+  it("does not crash on degenerate and nearly coincident footprint rings", () => {
+    const valid = feature([[0, 80], [0.5, 80], [0.5, 80.1], [0, 80.1], [0, 80]]);
+    const degenerate = feature([[0, 80], [0, 80], [Number.NaN, 80], [0, 80]]);
+    const shifted = feature([[0.000001, 80], [0.500001, 80], [0.500001, 80.1], [0.000001, 80.1], [0.000001, 80]]);
+    expect(() => unionPmcFootprints(null, [valid, degenerate, shifted])).not.toThrow();
+    const merged = unionPmcFootprints(null, [valid, shifted]);
+    expect(multiPolygonAreaKm2(merged)).toBeGreaterThan(100);
+  });
 });
