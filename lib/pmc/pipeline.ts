@@ -2,7 +2,7 @@ import { buildOrbitFootprint } from "../geo/orbit-geojson";
 import { adaptiveThreshold, articleThreshold, iterativeArticleBackground, iterativeBackground } from "./background";
 import { connectedComponents, closing, opening } from "./morphology";
 import { median } from "./statistics";
-import type { PmcClusterCollection, PmcPointCollection, ProcessingResult, ProcessingSettings } from "../../types/processing";
+import type { PmcClusterCollection, PmcPointCollection, ProcessingResult, ProcessingSettings, ResidualFieldCollection } from "../../types/processing";
 
 export type PmcInput = {
   sourceFile: string;
@@ -55,6 +55,7 @@ export function detectPmc(input: PmcInput): ProcessingResult {
   components.forEach((component) => component.forEach((i) => { keep[i] = 1; }));
 
   const pixelFeatures: PmcPointCollection["features"] = [];
+  const fieldFeatures: ResidualFieldCollection["features"] = [];
   const clusterFeatures: PmcClusterCollection["features"] = [];
   const phaseAngles = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180];
   const phase40nm = [5.35, 5.2, 4.75, 4.1, 3.35, 2.68, 2.1, 1.65, 1.28, 1, .84, .76, .72, .72, .73, .75, .77, .79, .8];
@@ -88,6 +89,39 @@ export function detectPmc(input: PmcInput): ProcessingResult {
       qualityLevel: residuals[0][i] >= 20e-6 ? "high" as const : residuals[0][i] >= 10e-6 ? "medium" as const : "low" as const,
     };
   };
+  const ringFor = (i: number) => {
+    const lon = longitude[i], lat = latitude[i], cornerOffset = i * 4;
+    const cornersValid = latitudeBounds && longitudeBounds && latitudeBounds.length >= cornerOffset + 4 && longitudeBounds.length >= cornerOffset + 4
+      && [0, 1, 2, 3].every((corner) => {
+        const cornerLat = latitudeBounds[cornerOffset + corner], cornerLon = longitudeBounds[cornerOffset + corner];
+        return Number.isFinite(cornerLat) && Number.isFinite(cornerLon) && Math.abs(cornerLat) <= 90 && Math.abs(cornerLon) <= 360;
+      });
+    let ring: number[][];
+    if (cornersValid && latitudeBounds && longitudeBounds) {
+      const firstLon = longitudeBounds[cornerOffset];
+      ring = Array.from({ length: 4 }, (_, corner) => {
+        let x = longitudeBounds[cornerOffset + corner];
+        while (x - firstLon > 180) x -= 360;
+        while (x - firstLon < -180) x += 360;
+        return [x, latitudeBounds[cornerOffset + corner]];
+      });
+    } else {
+      const dx = .03, dy = .015;
+      ring = [[lon - dx, lat - dy], [lon + dx, lat - dy], [lon + dx, lat + dy], [lon - dx, lat + dy]];
+    }
+    if (!ring.every(([x, y]) => Number.isFinite(x) && Number.isFinite(y))) return null;
+    ring.push([...ring[0]]);
+    return ring;
+  };
+  for (let i = 0; i < valid.length; i++) {
+    if (!valid[i] || !Number.isFinite(residuals[0][i]) || residuals[0][i] <= 0) continue;
+    const ring = ringFor(i);
+    if (ring) fieldFeatures.push({
+      type: "Feature",
+      properties: { ...base(i, 1), detected: keep[i] === 1 },
+      geometry: { type: "Polygon", coordinates: [ring] },
+    });
+  }
   for (const component of components) {
     let minLon = 180, maxLon = -180, minLat = 90, maxLat = -90, sumLon = 0, sumLat = 0, maxResidual = -Infinity, meanResidual = 0, meanThreshold = 0, representative = component[0];
     const values = new Float32Array(component.length);
@@ -95,27 +129,8 @@ export function detectPmc(input: PmcInput): ProcessingResult {
       const lon = longitude[i], lat = latitude[i]; minLon = Math.min(minLon, lon); maxLon = Math.max(maxLon, lon); minLat = Math.min(minLat, lat); maxLat = Math.max(maxLat, lat);
       sumLon += lon; sumLat += lat; values[j] = residuals[0][i]; meanResidual += residuals[0][i]; meanThreshold += threshold[i];
       if (residuals[0][i] > maxResidual) { maxResidual = residuals[0][i]; representative = i; }
-      const cornerOffset = i * 4;
-      let ring: number[][];
-      const cornersValid = latitudeBounds && longitudeBounds && latitudeBounds.length >= cornerOffset + 4 && longitudeBounds.length >= cornerOffset + 4
-        && [0, 1, 2, 3].every((corner) => {
-          const cornerLat = latitudeBounds[cornerOffset + corner], cornerLon = longitudeBounds[cornerOffset + corner];
-          return Number.isFinite(cornerLat) && Number.isFinite(cornerLon) && Math.abs(cornerLat) <= 90 && Math.abs(cornerLon) <= 360;
-        });
-      if (cornersValid && latitudeBounds && longitudeBounds) {
-        const firstLon = longitudeBounds[cornerOffset];
-        ring = Array.from({ length: 4 }, (_, corner) => {
-          let x = longitudeBounds[cornerOffset + corner];
-          while (x - firstLon > 180) x -= 360;
-          while (x - firstLon < -180) x += 360;
-          return [x, latitudeBounds[cornerOffset + corner]];
-        });
-      } else {
-        const dx = .03, dy = .015;
-        ring = [[lon - dx, lat - dy], [lon + dx, lat - dy], [lon + dx, lat + dy], [lon - dx, lat + dy]];
-      }
-      if (ring.every(([x, y]) => Number.isFinite(x) && Number.isFinite(y))) {
-        ring.push([...ring[0]]);
+      const ring = ringFor(i);
+      if (ring) {
         pixelFeatures.push({ type: "Feature", properties: base(i, component.length), geometry: { type: "Polygon", coordinates: [ring] } });
       }
     });
@@ -133,6 +148,7 @@ export function detectPmc(input: PmcInput): ProcessingResult {
   }
   return {
     orbit: buildOrbitFootprint(latitude, longitude, [rows, cols]),
+    field: { type: "FeatureCollection", features: fieldFeatures },
     pixels: { type: "FeatureCollection", features: pixelFeatures },
     clusters: { type: "FeatureCollection", features: clusterFeatures },
     warnings: [

@@ -27,8 +27,8 @@ const unprojectNorth = (x: number, y: number) => {
   return [longitude, latitude] as [number, number];
 };
 
-const dailyGrid = (features: ProcessingResult["pixels"]["features"]) => {
-  const brightest = new Map<string, { feature: ProcessingResult["pixels"]["features"][number]; x: number; y: number }>();
+const dailyGrid = <T extends ProcessingResult["pixels"]["features"][number]>(features: T[]): T[] => {
+  const brightest = new Map<string, { feature: T; x: number; y: number }>();
   for (const feature of features) {
     const ring = feature.geometry.coordinates[0];
     if (!ring?.length) continue;
@@ -57,7 +57,7 @@ const dailyGrid = (features: ProcessingResult["pixels"]["features"]) => {
           unprojectNorth(x - DAILY_GRID_KM / 2, y - DAILY_GRID_KM / 2),
         ]],
       },
-    }));
+    } as T));
 };
 
 const mergeProcessingResult = (current: ProcessingResult | null, next: ProcessingResult, daily: boolean): ProcessingResult => {
@@ -65,11 +65,17 @@ const mergeProcessingResult = (current: ProcessingResult | null, next: Processin
     ...next,
     metadata: { ...next.metadata, orbitCount: 1, sourceFiles: [next.metadata.sourceFile].filter(Boolean), displayMode: "single-orbit-native-bins" },
   };
-  if (!current) return { ...next, pixels: { ...next.pixels, features: dailyGrid(next.pixels.features) }, metadata: { ...next.metadata, orbitCount: 1, sourceFiles: [next.metadata.sourceFile].filter(Boolean), dailyGridKm: DAILY_GRID_KM, displayMode: "daily-7.5-km-grid" } };
+  if (!current) return {
+    ...next,
+    pixels: { ...next.pixels, features: dailyGrid(next.pixels.features) },
+    field: { ...next.field, features: dailyGrid(next.field.features) },
+    metadata: { ...next.metadata, orbitCount: 1, sourceFiles: [next.metadata.sourceFile].filter(Boolean), dailyGridKm: DAILY_GRID_KM, displayMode: "daily-7.5-km-grid" },
+  };
   const clusterOffset = current.clusters.features.length;
   return {
     orbit: { type: "FeatureCollection", features: [...current.orbit.features, ...next.orbit.features] },
     pixels: { type: "FeatureCollection", features: dailyGrid([...current.pixels.features, ...next.pixels.features]) },
+    field: { type: "FeatureCollection", features: dailyGrid([...current.field.features, ...next.field.features]) },
     clusters: {
       type: "FeatureCollection",
       features: [...current.clusters.features, ...next.clusters.features.map((feature) => ({
@@ -210,15 +216,15 @@ export default function Explorer() {
             {orbit ? <button className="download" onClick={() => download(orbit, "orbit.geojson")}>↓ ORBIT</button> : null}
           </div>
           {mapMode === "maplibre"
-            ? <PmcMap key={String(result?.metadata.processedAt ?? "empty")} orbit={orbit} pixels={result?.pixels ?? null} clusters={result?.clusters ?? null} />
-            : <PolarMap pixels={result?.pixels ?? null} singleOrbit={Number(result?.metadata.orbitCount ?? 0) === 1} />}
+            ? <PmcMap key={String(result?.metadata.processedAt ?? "empty")} orbit={orbit} field={result?.field ?? null} pixels={result?.pixels ?? null} clusters={result?.clusters ?? null} />
+            : <PolarMap field={result?.field ?? null} pixels={result?.pixels ?? null} singleOrbit={Number(result?.metadata.orbitCount ?? 0) === 1} />}
           <div className="map-status quality-legend"><span><i className="quality low" />0</span><span><i className="quality medium" />0,5</span><span><i className="quality high" />1,0</span><em>NORMALIZED RESIDUAL ALBEDO · 283 NM</em></div>
           {result ? <div className="result-strip">
-            <div><b>{result.pixels.features.length}</b><span>пикселей</span></div><div><b>{result.clusters.features.length}</b><span>кластеров</span></div>
+            <div><b>{result.field.features.length}</b><span>ячеек residual</span></div><div><b>{result.pixels.features.length}</b><span>PMC-пикселей</span></div><div><b>{result.clusters.features.length}</b><span>кластеров</span></div>
             <div><b className="blue-number">{result.pixels.features.filter((feature) => feature.properties.residual < 10e-6).length}</b><span>&lt;10×10⁻⁶</span></div>
             <div><b className="yellow-number">{result.pixels.features.filter((feature) => feature.properties.residual >= 10e-6 && feature.properties.residual < 20e-6).length}</b><span>10–20×10⁻⁶</span></div>
             <div><b className="red-number">{result.pixels.features.filter((feature) => feature.properties.residual >= 20e-6).length}</b><span>≥20×10⁻⁶</span></div>
-            <button onClick={() => download(result.pixels, "pmc-pixels.geojson")}>PMC PIXELS ↓</button><button onClick={() => download(result.clusters, "pmc-clusters.geojson")}>PMC CLUSTERS ↓</button><button onClick={() => download(result.metadata, "metadata.json")}>METADATA ↓</button>
+            <button onClick={() => download(result.field, "residual-field.geojson")}>RESIDUAL FIELD ↓</button><button onClick={() => download(result.pixels, "pmc-pixels.geojson")}>PMC MASK ↓</button><button onClick={() => download(result.clusters, "pmc-clusters.geojson")}>PMC CLUSTERS ↓</button><button onClick={() => download(result.metadata, "metadata.json")}>METADATA ↓</button>
           </div> : null}
           {result?.warnings.map((warning) => <div className="warning" key={warning}>{warning}</div>)}
         </section>

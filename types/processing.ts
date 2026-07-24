@@ -29,6 +29,7 @@ export type PmcProperties = {
 };
 
 export type PmcPointCollection = GeoJSON.FeatureCollection<GeoJSON.Polygon, PmcProperties>;
+export type ResidualFieldCollection = GeoJSON.FeatureCollection<GeoJSON.Polygon, PmcProperties & { detected: boolean }>;
 export type PmcClusterCollection = GeoJSON.FeatureCollection<GeoJSON.Polygon, PmcProperties & {
   clusterId: number;
   meanResidual: number;
@@ -43,6 +44,7 @@ export type PmcClusterCollection = GeoJSON.FeatureCollection<GeoJSON.Polygon, Pm
 export type ProcessingResult = {
   orbit: OrbitGeoJson;
   pixels: PmcPointCollection;
+  field: ResidualFieldCollection;
   clusters: PmcClusterCollection;
   metadata: Record<string, unknown>;
   warnings: string[];

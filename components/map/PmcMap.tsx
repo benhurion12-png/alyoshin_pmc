@@ -3,9 +3,9 @@
 import { useEffect, useRef } from "react";
 import maplibregl, { GeoJSONSource, Map } from "maplibre-gl";
 import type { OrbitGeoJson } from "@/types/netcdf";
-import type { PmcClusterCollection, PmcPointCollection } from "@/types/processing";
+import type { PmcClusterCollection, PmcPointCollection, ResidualFieldCollection } from "@/types/processing";
 
-export default function PmcMap({ orbit, pixels, clusters }: { orbit: OrbitGeoJson | null; pixels: PmcPointCollection | null; clusters: PmcClusterCollection | null }) {
+export default function PmcMap({ orbit, field, pixels, clusters }: { orbit: OrbitGeoJson | null; field: ResidualFieldCollection | null; pixels: PmcPointCollection | null; clusters: PmcClusterCollection | null }) {
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<Map | null>(null);
 
@@ -65,7 +65,7 @@ export default function PmcMap({ orbit, pixels, clusters }: { orbit: OrbitGeoJso
 
   useEffect(() => {
     const instance = map.current;
-    if (!instance || !pixels || !clusters) return;
+    if (!instance || !field || !pixels || !clusters) return;
     const apply = () => {
       instance.setRenderWorldCopies(false);
       if (clusters.features.length) {
@@ -73,15 +73,24 @@ export default function PmcMap({ orbit, pixels, clusters }: { orbit: OrbitGeoJso
         const [centerLon, centerLat] = largest.properties.centroid;
         if (Number.isFinite(centerLon) && Number.isFinite(centerLat)) instance.jumpTo({ center: [centerLon, centerLat], zoom: 5.2 });
       }
-      for (const layer of ["pmc-pixel-outline", "pmc-pixels", "pmc-cluster-outline", "pmc-cluster-fill"]) if (instance.getLayer(layer)) instance.removeLayer(layer);
-      for (const source of ["pmc-pixels", "pmc-clusters"]) if (instance.getSource(source)) instance.removeSource(source);
+      for (const layer of ["pmc-pixel-outline", "pmc-pixels", "residual-field", "pmc-cluster-outline", "pmc-cluster-fill"]) if (instance.getLayer(layer)) instance.removeLayer(layer);
+      for (const source of ["pmc-pixels", "residual-field", "pmc-clusters"]) if (instance.getSource(source)) instance.removeSource(source);
+      instance.addSource("residual-field", { type: "geojson", data: field });
       instance.addSource("pmc-pixels", { type: "geojson", data: pixels });
       instance.addSource("pmc-clusters", { type: "geojson", data: clusters });
+      instance.addLayer({
+        id: "residual-field", type: "fill", source: "residual-field",
+        paint: {
+          "fill-color": ["interpolate", ["linear"], ["get", "detectionScore"], 0, "#150087", .15, "#163ecb", .3, "#008de5", .45, "#00d3c0", .6, "#4ddd4b", .75, "#ffe000", .9, "#ff5500", 1, "#ffffff"],
+          "fill-opacity": .82,
+          "fill-outline-color": "rgba(0,0,0,0)",
+        },
+      });
       instance.addLayer({
         id: "pmc-pixels", type: "fill", source: "pmc-pixels",
         paint: {
           "fill-color": ["interpolate", ["linear"], ["get", "detectionScore"], 0, "#1600a8", .2, "#006cff", .4, "#00d8d2", .6, "#4ee329", .75, "#ffe600", .9, "#ff5600", 1, "#a80000"],
-          "fill-opacity": .9,
+          "fill-opacity": .18,
           "fill-outline-color": ["interpolate", ["linear"], ["get", "detectionScore"], 0, "#1600a8", .5, "#20d080", 1, "#a80000"],
         },
       });
@@ -101,7 +110,7 @@ export default function PmcMap({ orbit, pixels, clusters }: { orbit: OrbitGeoJso
       instance.on("click", "pmc-pixels", popup);
     };
     if (instance.isStyleLoaded()) apply(); else instance.once("load", apply);
-  }, [pixels, clusters]);
+  }, [field, pixels, clusters]);
 
   const savePng = () => {
     const canvas = map.current?.getCanvas(); if (!canvas) return;
