@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 import h5wasm, { Dataset, Group } from "h5wasm";
 import { buildOrbitFootprint } from "@/lib/geo/orbit-geojson";
+import { parallaxCorrectGeolocation } from "@/lib/geo/parallax";
 import { discoverVariables } from "@/lib/netcdf/variable-discovery";
 import { detectPmc } from "@/lib/pmc/pipeline";
 import { spatialBin } from "@/lib/pmc/spatial-binning";
@@ -198,9 +199,15 @@ async function processPmc(fileObject: File, irradianceFile: File | undefined, se
     solarAzimuth: solarAzimuth ? asFloat32(solarAzimuth.value) : undefined,
     viewingAzimuth: viewingAzimuth ? asFloat32(viewingAzimuth.value) : undefined,
   });
+  send({ type: "PROGRESS", stage: "Параллактическая поправка на высоту PMC (83 км)", percent: 70, bytesRead: 0 });
+  const cloudGeolocation = parallaxCorrectGeolocation(binned);
   send({ type: "PROGRESS", stage: "Итеративная фоновая модель", percent: 72, bytesRead: 0 });
   const result = detectPmc({
     sourceFile: fileObject.name, ...binned,
+    cloudLatitude: cloudGeolocation.latitude,
+    cloudLongitude: cloudGeolocation.longitude,
+    cloudLatitudeBounds: cloudGeolocation.latitudeBounds,
+    cloudLongitudeBounds: cloudGeolocation.longitudeBounds,
     signalMode: solar ? "albedo" : "relative-radiance", settings,
   });
   file.close();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { multiPolygonAreaKm2, unionPmcFootprints } from "./pmc-area";
+import { featureFootprintAreaKm2, multiPolygonAreaKm2, unionPmcFootprints } from "./pmc-area";
 import type { PmcPointCollection, PmcProperties } from "@/types/processing";
 
 const properties: PmcProperties = {
@@ -31,5 +31,20 @@ describe("PMC footprint area", () => {
     expect(() => unionPmcFootprints(null, [valid, degenerate, shifted])).not.toThrow();
     const merged = unionPmcFootprints(null, [valid, shifted]);
     expect(multiPolygonAreaKm2(merged)).toBeGreaterThan(100);
+  });
+});
+
+describe("featureFootprintAreaKm2", () => {
+  it("matches the union area for a single isolated feature", () => {
+    const pixel = feature([[0, 79.95], [0.52, 79.95], [0.52, 80.05], [0, 80.05], [0, 79.95]]);
+    const union = unionPmcFootprints(null, [pixel]);
+    expect(featureFootprintAreaKm2(pixel)).toBeCloseTo(multiPolygonAreaKm2(union), 2);
+  });
+
+  it("sums independently for overlapping features instead of deduplicating", () => {
+    const a = feature([[0, 79.95], [0.52, 79.95], [0.52, 80.05], [0, 80.05], [0, 79.95]]);
+    const b = feature([[0, 79.95], [0.52, 79.95], [0.52, 80.05], [0, 80.05], [0, 79.95]]);
+    const sum = featureFootprintAreaKm2(a) + featureFootprintAreaKm2(b);
+    expect(sum).toBeCloseTo(2 * featureFootprintAreaKm2(a), 6);
   });
 });

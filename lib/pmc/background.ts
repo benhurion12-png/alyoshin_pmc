@@ -75,6 +75,9 @@ export function adaptiveThreshold(residual: Float32Array, sza: Float32Array, val
 
 // Digitized from Wu et al. (2026), Figure 5. The plotted curves are the final
 // detection thresholds in residual-albedo units (axis is ×10⁻⁶ sr⁻¹).
+// The digitized coefficients represent the final 2.2 × Threshold curves.
+// Do not apply the empirical multiplier again: doing so makes detections below
+// 10 × 10⁻⁶ sr⁻¹ impossible, contradicting the blue PMC pixels in Figure 7.
 const ARTICLE_THRESHOLD_COEFFICIENTS = [
   [9.10672716e-4, -4.17282790e-2, 6.44562562],
   [1.75435299e-3, -1.10785342e-1, 5.94616993],

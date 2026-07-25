@@ -4,7 +4,8 @@ import dynamic from "next/dynamic";
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import DatasetTree from "@/components/inspection/DatasetTree";
 import ApiCalendar from "@/components/catalogue/ApiCalendar";
-import { multiPolygonAreaKm2, unionPmcFootprints, type ProjectedMultiPolygon } from "@/lib/geo/pmc-area";
+import { featureFootprintAreaKm2, multiPolygonAreaKm2, unionPmcFootprints, type ProjectedMultiPolygon } from "@/lib/geo/pmc-area";
+import { ARTICLE_TROPOMI_NORMALIZATION_SR } from "@/lib/pmc/constants";
 import type { InspectionResult, OrbitGeoJson } from "@/types/netcdf";
 import type { WorkerResponse } from "@/types/worker";
 import { DEFAULT_SETTINGS, type ProcessingResult, type ProcessingSettings } from "@/types/processing";
@@ -14,9 +15,10 @@ const PolarMap = dynamic(() => import("@/components/map/PolarMap"), { ssr: false
 const formatBytes = (n: number) => new Intl.NumberFormat("ru", { maximumFractionDigits: 1 }).format(n / 1024 / 1024) + " МБ";
 const EARTH_RADIUS_KM = 6371;
 // Figure 10 uses a common 50 km × 50 km comparison grid. TROPOMI colour
-// values are normalized by a fixed 30 × 10⁻⁶ sr⁻¹ reference.
+// values are normalized by the same fixed reference as the single-orbit view
+// (lib/pmc/constants.ts), so a residual renders the same color in both modes.
 const DAILY_GRID_KM = 50;
-const FIGURE_10_TROPOMI_SCALE = 30e-6;
+const FIGURE_10_TROPOMI_SCALE = ARTICLE_TROPOMI_NORMALIZATION_SR;
 const POLAR_CAP_50N_KM2 = 2 * Math.PI * EARTH_RADIUS_KM ** 2 * (1 - Math.sin(50 * Math.PI / 180));
 const formatArea = (areaKm2: number) => new Intl.NumberFormat("ru", { maximumFractionDigits: 0 }).format(areaKm2);
 
@@ -97,6 +99,10 @@ const mergeProcessingResult = (current: ProcessingResult | null, next: Processin
   return {
     orbit: { type: "FeatureCollection", features: [...current.orbit.features, ...next.orbit.features] },
     pixels: { type: "FeatureCollection", features: dailyGrid([...current.pixels.features, ...next.pixels.features]) },
+    // Not deduplicated onto the daily grid: this collection is only ever
+    // used per-orbit for the area union in the PROCESSING_COMPLETE handler
+    // above, never rendered, so keeping it a plain concatenation here is fine.
+    allCandidates: { type: "FeatureCollection", features: [...current.allCandidates.features, ...next.allCandidates.features] },
     field: { type: "FeatureCollection", features: dailyGrid([...current.field.features, ...next.field.features]) },
     clusters: {
       type: "FeatureCollection",
@@ -145,6 +151,7 @@ export default function Explorer() {
     coherentHighUnion: ProjectedMultiPolygon | null;
     nativeCandidateCount: number;
     coherentNativeCount: number;
+    fractionalAreaKm2: number;
     settings: ProcessingSettings;
   } | null>(null);
 
@@ -166,17 +173,34 @@ export default function Explorer() {
           setResult(message.result); setOrbit(message.result.orbit); setBusy(false); setProgress({ stage: "Обработка завершена", percent: 100 });
           return;
         }
-        const coherent = message.result.pixels.features.filter((feature) => feature.properties.pixelCount >= 3);
+        // The worker has already applied the user-selected minimum cluster
+        // size. Wu et al. classify every pixel that passes the threshold and
+        // spectral rules; applying another hard-coded three-bin filter here
+        // would discard valid faint/small PMC detections from the area total.
+        const coherent = message.result.pixels.features;
         const coherentLow = coherent.filter((feature) => feature.properties.residual < 10e-6);
         const coherentMedium = coherent.filter((feature) => feature.properties.residual >= 10e-6 && feature.properties.residual < 20e-6);
         const coherentHigh = coherent.filter((feature) => feature.properties.residual >= 20e-6);
-        activeBatch.allCandidateUnion = unionPmcFootprints(activeBatch.allCandidateUnion, message.result.pixels.features);
+        // allCandidates is every pixel that individually crossed the
+        // threshold, before the minimumClusterSize filter — a real upper
+        // bound on `coherent`, not a copy of it.
+        activeBatch.allCandidateUnion = unionPmcFootprints(activeBatch.allCandidateUnion, message.result.allCandidates.features);
         activeBatch.coherentPmcUnion = unionPmcFootprints(activeBatch.coherentPmcUnion, coherent);
         activeBatch.coherentLowUnion = unionPmcFootprints(activeBatch.coherentLowUnion, coherentLow);
         activeBatch.coherentMediumUnion = unionPmcFootprints(activeBatch.coherentMediumUnion, coherentMedium);
         activeBatch.coherentHighUnion = unionPmcFootprints(activeBatch.coherentHighUnion, coherentHigh);
-        activeBatch.nativeCandidateCount += message.result.pixels.features.length;
+        activeBatch.nativeCandidateCount += message.result.allCandidates.features.length;
         activeBatch.coherentNativeCount += coherent.length;
+        // Must be accumulated here, per orbit, from the still-native pixel
+        // geometry: mergeProcessingResult()/dailyGrid() below replaces each
+        // pixel's geometry with a uniform 50x50 km Figure-10 comparison-grid
+        // cell for multi-orbit runs, so computing this from the merged
+        // aggregate afterwards would weight by grid-cell area instead of the
+        // true (much smaller, and native-pixel-sized) footprint.
+        activeBatch.fractionalAreaKm2 += coherent.reduce(
+          (sum, feature) => sum + featureFootprintAreaKm2(feature) * Math.max(0, Math.min(1, feature.properties.detectionScore)),
+          0,
+        );
         activeBatch.aggregate = mergeProcessingResult(activeBatch.aggregate, message.result, activeBatch.files.length > 1);
         activeBatch.index++;
         if (activeBatch.index < activeBatch.files.length) {
@@ -197,6 +221,7 @@ export default function Explorer() {
               metadata: {
                 ...complete.metadata,
                 physicalPmcFootprintAreaKm2: coherentPmcAreaKm2,
+                fractionalFootprintAreaKm2: activeBatch.fractionalAreaKm2,
                 allCandidateFootprintAreaKm2: allCandidateAreaKm2,
                 coherentLowFootprintAreaKm2: coherentLowAreaKm2,
                 coherentMediumFootprintAreaKm2: coherentMediumAreaKm2,
@@ -204,7 +229,7 @@ export default function Explorer() {
                 nativeCandidateCount: activeBatch.nativeCandidateCount,
                 coherentNativeCount: activeBatch.coherentNativeCount,
                 isolatedNativeCount: activeBatch.nativeCandidateCount - activeBatch.coherentNativeCount,
-                coherentClusterMinimumBins: 3,
+                coherentClusterMinimumBins: activeBatch.settings.minimumClusterSize,
                 physicalAreaMethod: "union-native-binned-footprints-north-lambert-equal-area",
               },
             };
@@ -233,9 +258,30 @@ export default function Explorer() {
     const physicalAreaKm2 = Number.isFinite(measuredPhysicalAreaKm2) ? measuredPhysicalAreaKm2 : gridCoverageKm2;
     const upperCandidateAreaKm2 = Number(result.metadata.allCandidateFootprintAreaKm2);
     const observedCells = result.field.features.length;
+    // Binary area above counts the whole (coarse, ~650-1250 km^2) pixel for
+    // any threshold crossing. Most detections sit well below the fully-cloudy
+    // reference signal (ARTICLE_TROPOMI_NORMALIZATION_SR, the same 30x10^-6
+    // sr^-1 Figure 10 uses), so weighting each footprint's own area by its
+    // detectionScore (0..1 fraction of that reference) gives a sub-pixel
+    // cloud-fraction estimate instead of an all-or-nothing pixel count.
+    // Must come from metadata (accumulated per-orbit from native pixel
+    // geometry in the PROCESSING_COMPLETE handler above), not recomputed from
+    // result.pixels here: for multi-orbit runs, result.pixels has already
+    // been through dailyGrid(), which replaces every pixel's geometry with a
+    // uniform 50x50 km comparison-grid cell (~2500 km^2) -- weighting that
+    // by detectionScore overstates fractional area since it is no longer the
+    // native ~650-1250 km^2 footprint the estimate is meant to describe.
+    const measuredFractionalAreaKm2 = Number(result.metadata.fractionalFootprintAreaKm2);
+    const fractionalAreaKm2 = Number.isFinite(measuredFractionalAreaKm2)
+      ? measuredFractionalAreaKm2
+      : result.pixels.features.reduce(
+          (sum, feature) => sum + featureFootprintAreaKm2(feature) * Math.max(0, Math.min(1, feature.properties.detectionScore)),
+          0,
+        );
     return {
       gridCoverageKm2,
       physicalAreaKm2,
+      fractionalAreaKm2,
       upperCandidateAreaKm2: Number.isFinite(upperCandidateAreaKm2) ? upperCandidateAreaKm2 : physicalAreaKm2,
       occurrencePercent: observedCells ? result.pixels.features.length / observedCells * 100 : 0,
       observedCells,
@@ -263,7 +309,7 @@ export default function Explorer() {
       files, irradianceFile, index: 0, aggregate: null,
       allCandidateUnion: null, coherentPmcUnion: null,
       coherentLowUnion: null, coherentMediumUnion: null, coherentHighUnion: null,
-      nativeCandidateCount: 0, coherentNativeCount: 0, settings,
+      nativeCandidateCount: 0, coherentNativeCount: 0, fractionalAreaKm2: 0, settings,
     };
     setProgress({ stage: `Орбита 1/${files.length} · ${files[0].name}`, percent: 0 });
     worker.current?.postMessage({ type: "PROCESS", radianceFile: files[0], irradianceFile: irradianceFile ?? undefined, settings });
@@ -328,18 +374,31 @@ export default function Explorer() {
             <button onClick={() => download(result.field, "residual-field.geojson")}>RESIDUAL FIELD ↓</button><button onClick={() => download(result.pixels, "pmc-pixels.geojson")}>PMC MASK ↓</button><button onClick={() => download(result.clusters, "pmc-clusters.geojson")}>PMC CLUSTERS ↓</button><button onClick={() => download(result.metadata, "metadata.json")}>METADATA ↓</button>
           </div> : null}
           {areaStats ? <div className="area-summary">
-            <div><span>ПЛОЩАДЬ УСТОЙЧИВЫХ PMC (≥3 BINS)</span><b>{formatArea(areaStats.physicalAreaKm2)} км²</b></div>
-            <div><span>ВЕРХНЯЯ ОЦЕНКА ВСЕХ КАНДИДАТОВ</span><b>{formatArea(areaStats.upperCandidateAreaKm2)} км²</b></div>
-            <div><span>PMC OCCURRENCE В НАБЛЮДЕНИЯХ</span><b>{areaStats.occurrencePercent.toFixed(2)}%</b></div>
-            <div><span>НАБЛЮДАВШИЕСЯ ЯЧЕЙКИ / ОДИНОЧНЫЕ BINS</span><b>{areaStats.observedCells} / {areaStats.isolatedNativeCount}</b></div>
-            <div><span>ПОКРЫТИЕ ЯЧЕЕК 50 КМ</span><b>{formatArea(areaStats.gridCoverageKm2)} км²</b></div>
-            <div><span>NATIVE FOOTPRINT: СЛАБЫЕ / СРЕДНИЕ / ЯРКИЕ</span><b>{formatArea(areaStats.lowAreaKm2)} / {formatArea(areaStats.mediumAreaKm2)} / {formatArea(areaStats.highAreaKm2)} км²</b></div>
+            <div className="headline-stat">
+              <span>ФРАКЦИОННАЯ ПЛОЩАДЬ (ВЗВЕШЕНО ПО ДОЛЕ СИГНАЛА ОТ 30×10⁻⁶ SR⁻¹)</span>
+              <b>{formatArea(areaStats.fractionalAreaKm2)} км²</b>
+            </div>
+            <div className="headline-stat">
+              <span>PMC OCCURRENCE В НАБЛЮДЕНИЯХ</span>
+              <b>{areaStats.occurrencePercent.toFixed(2)}%</b>
+            </div>
+            <div className="muted-stat"><span>бинарная площадь PMC по маске статьи (весь пиксель = 100%)</span><b>{formatArea(areaStats.physicalAreaKm2)} км²</b></div>
+            <div className="muted-stat"><span>контрольная площадь всех детекций (до фильтра кластера)</span><b>{formatArea(areaStats.upperCandidateAreaKm2)} км²</b></div>
+            <div><span>НАБЛЮДАВШИЕСЯ ЯЧЕЙКИ / ОТБРОШЕННЫЕ BINS</span><b>{areaStats.observedCells} / {areaStats.isolatedNativeCount}</b></div>
+            <div className="muted-stat"><span>покрытие ячеек 50 км</span><b>{formatArea(areaStats.gridCoverageKm2)} км²</b></div>
+            <div className="muted-stat"><span>native footprint: слабые / средние / яркие</span><b>{formatArea(areaStats.lowAreaKm2)} / {formatArea(areaStats.mediumAreaKm2)} / {formatArea(areaStats.highAreaKm2)} км²</b></div>
             <div><span>ДОЛЯ ЗОНЫ 50–90°N</span><b>{areaStats.polarCapFraction.toFixed(2)}%</b></div>
             <div><span>МЕТОД ПЛОЩАДИ</span><b>UNION NATIVE FOOTPRINTS</b></div>
             <p>
-              Основная площадь использует только связные компоненты минимум из трёх исходных bins. Верхняя
-              оценка включает одиночные спектральные кандидаты. Геометрия считается до сетки 50 км по углам
-              footprint в равновеликой проекции, а пересечения орбит учитываются один раз.
+              Нативный пиксель TROPOMI Band 1 (UV, каналы 283/287/291,5 нм) после обязательного биннинга 2×2/2×3
+              занимает ~650–1250 км² — на 1–2 порядка грубее, чем у приборов, спроектированных для PMC (например
+              AIM/CIPS). «Бинарная площадь» ниже красит весь такой пиксель при любом пересечении порога и потому
+              её нельзя сравнивать с другими инструментами напрямую. «Фракционная площадь» выше умножает площадь
+              каждого footprint-а на его detectionScore (0…1, доля от 30×10⁻⁶ sr⁻¹ — та же опорная яркость, что
+              статья использует для Figure 10), то есть оценивает долю пикселя, реально занятую облаком, а не
+              красит его целиком — это и есть способ измерить площадь на грубом пикселе корректно. Оба допущения
+              (линейная модель смешения сигнала и константа 30×10⁻⁶ как «полностью облачно») не откалиброваны
+              независимо, но принципиально ближе к тому, как AIM/CIPS оценивает покрытие по яркости, чем бинарный счёт.
             </p>
           </div> : null}
           {result?.warnings.map((warning) => <div className="warning" key={warning}>{warning}</div>)}

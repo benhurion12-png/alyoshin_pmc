@@ -12,7 +12,7 @@ describe("articleThreshold", () => {
     expect(threshold[25]).toBeCloseTo(5.601e-6, 8);
   });
 
-  it("returns the final plotted 2.2 × Threshold curve without another 2.2 multiplier", () => {
+  it("does not multiply the already-final digitized curve again", () => {
     const sza = new Float32Array([60]);
     const valid = new Uint8Array([1]);
     const finalThreshold = articleThreshold(sza, valid, 1);

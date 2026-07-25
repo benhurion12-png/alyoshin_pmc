@@ -1,5 +1,6 @@
 import { buildOrbitFootprint } from "../geo/orbit-geojson";
 import { adaptiveThreshold, articleThreshold, iterativeArticleBackground, iterativeBackground } from "./background";
+import { ARTICLE_TROPOMI_NORMALIZATION_SR } from "./constants";
 import { connectedComponents, closing, opening } from "./morphology";
 import { median } from "./statistics";
 import type { PmcClusterCollection, PmcPointCollection, ProcessingResult, ProcessingSettings, ResidualFieldCollection } from "../../types/processing";
@@ -12,6 +13,14 @@ export type PmcInput = {
   longitude: Float32Array;
   latitudeBounds?: Float32Array;
   longitudeBounds?: Float32Array;
+  // Parallax-corrected ground position of the ~83 km PMC layer (see
+  // lib/geo/parallax.ts). Used only for cloud footprint/cluster geometry;
+  // the raw latitude/longitude above remain the ellipsoid-crossing position
+  // used for the orbit swath outline and season/latitude gating.
+  cloudLatitude?: Float32Array;
+  cloudLongitude?: Float32Array;
+  cloudLatitudeBounds?: Float32Array;
+  cloudLongitudeBounds?: Float32Array;
   sza: Float32Array;
   viewingZenith?: Float32Array;
   solarAzimuth?: Float32Array;
@@ -37,6 +46,10 @@ export function isNorthernPmcSeason(sourceFile: string) {
 
 export function detectPmc(input: PmcInput): ProcessingResult {
   const { rows, cols, latitude, longitude, latitudeBounds, longitudeBounds, sza, signals, qualityMask, settings } = input;
+  const cloudLatitude = input.cloudLatitude ?? latitude;
+  const cloudLongitude = input.cloudLongitude ?? longitude;
+  const cloudLatitudeBounds = input.cloudLatitudeBounds ?? latitudeBounds;
+  const cloudLongitudeBounds = input.cloudLongitudeBounds ?? longitudeBounds;
   const inSeason = isNorthernPmcSeason(input.sourceFile);
   const valid = new Uint8Array(rows * cols), backgroundValid = new Uint8Array(rows * cols);
   for (let i = 0; i < valid.length; i++) {
@@ -69,6 +82,7 @@ export function detectPmc(input: PmcInput): ProcessingResult {
   components.forEach((component) => component.forEach((i) => { keep[i] = 1; }));
 
   const pixelFeatures: PmcPointCollection["features"] = [];
+  const allCandidateFeatures: PmcPointCollection["features"] = [];
   const fieldFeatures: ResidualFieldCollection["features"] = [];
   const clusterFeatures: PmcClusterCollection["features"] = [];
   const phaseAngles = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180];
@@ -81,7 +95,7 @@ export function detectPmc(input: PmcInput): ProcessingResult {
   };
   const base = (i: number, count: number) => {
     const snr = residuals[0][i] / Math.max(threshold[i], 1e-20);
-    const score = Math.max(0, Math.min(1, residuals[0][i] / 60e-6));
+    const score = Math.max(0, Math.min(1, residuals[0][i] / ARTICLE_TROPOMI_NORMALIZATION_SR));
     let normalizedResidual = residuals[0][i];
     if (input.viewingZenith && input.solarAzimuth && input.viewingAzimuth) {
       const toRadians = Math.PI / 180;
@@ -104,20 +118,20 @@ export function detectPmc(input: PmcInput): ProcessingResult {
     };
   };
   const ringFor = (i: number) => {
-    const lon = longitude[i], lat = latitude[i], cornerOffset = i * 4;
-    const cornersValid = latitudeBounds && longitudeBounds && latitudeBounds.length >= cornerOffset + 4 && longitudeBounds.length >= cornerOffset + 4
+    const lon = cloudLongitude[i], lat = cloudLatitude[i], cornerOffset = i * 4;
+    const cornersValid = cloudLatitudeBounds && cloudLongitudeBounds && cloudLatitudeBounds.length >= cornerOffset + 4 && cloudLongitudeBounds.length >= cornerOffset + 4
       && [0, 1, 2, 3].every((corner) => {
-        const cornerLat = latitudeBounds[cornerOffset + corner], cornerLon = longitudeBounds[cornerOffset + corner];
+        const cornerLat = cloudLatitudeBounds[cornerOffset + corner], cornerLon = cloudLongitudeBounds[cornerOffset + corner];
         return Number.isFinite(cornerLat) && Number.isFinite(cornerLon) && Math.abs(cornerLat) <= 90 && Math.abs(cornerLon) <= 360;
       });
     let ring: number[][];
-    if (cornersValid && latitudeBounds && longitudeBounds) {
-      const firstLon = longitudeBounds[cornerOffset];
+    if (cornersValid && cloudLatitudeBounds && cloudLongitudeBounds) {
+      const firstLon = cloudLongitudeBounds[cornerOffset];
       ring = Array.from({ length: 4 }, (_, corner) => {
-        let x = longitudeBounds[cornerOffset + corner];
+        let x = cloudLongitudeBounds[cornerOffset + corner];
         while (x - firstLon > 180) x -= 360;
         while (x - firstLon < -180) x += 360;
-        return [x, latitudeBounds[cornerOffset + corner]];
+        return [x, cloudLatitudeBounds[cornerOffset + corner]];
       });
     } else {
       const dx = .03, dy = .015;
@@ -130,17 +144,19 @@ export function detectPmc(input: PmcInput): ProcessingResult {
   for (let i = 0; i < valid.length; i++) {
     if (!valid[i] || !Number.isFinite(residuals[0][i])) continue;
     const ring = ringFor(i);
-    if (ring) fieldFeatures.push({
+    if (!ring) continue;
+    fieldFeatures.push({
       type: "Feature",
       properties: { ...base(i, 1), detected: keep[i] === 1 },
       geometry: { type: "Polygon", coordinates: [ring] },
     });
+    if (mask[i]) allCandidateFeatures.push({ type: "Feature", properties: base(i, 1), geometry: { type: "Polygon", coordinates: [ring] } });
   }
   for (const component of components) {
     let minLon = 180, maxLon = -180, minLat = 90, maxLat = -90, sumLon = 0, sumLat = 0, maxResidual = -Infinity, meanResidual = 0, meanThreshold = 0, representative = component[0];
     const values = new Float32Array(component.length);
     component.forEach((i, j) => {
-      const lon = longitude[i], lat = latitude[i]; minLon = Math.min(minLon, lon); maxLon = Math.max(maxLon, lon); minLat = Math.min(minLat, lat); maxLat = Math.max(maxLat, lat);
+      const lon = cloudLongitude[i], lat = cloudLatitude[i]; minLon = Math.min(minLon, lon); maxLon = Math.max(maxLon, lon); minLat = Math.min(minLat, lat); maxLat = Math.max(maxLat, lat);
       sumLon += lon; sumLat += lat; values[j] = residuals[0][i]; meanResidual += residuals[0][i]; meanThreshold += threshold[i];
       if (residuals[0][i] > maxResidual) { maxResidual = residuals[0][i]; representative = i; }
       const ring = ringFor(i);
@@ -164,6 +180,7 @@ export function detectPmc(input: PmcInput): ProcessingResult {
     orbit: buildOrbitFootprint(latitude, longitude, [rows, cols]),
     field: { type: "FeatureCollection", features: fieldFeatures },
     pixels: { type: "FeatureCollection", features: pixelFeatures },
+    allCandidates: { type: "FeatureCollection", features: allCandidateFeatures },
     clusters: { type: "FeatureCollection", features: clusterFeatures },
     warnings: [
       !inSeason
@@ -176,7 +193,10 @@ export function detectPmc(input: PmcInput): ProcessingResult {
         ? "Residual albedo нормализовано к надиру по Equation (3) и фазовой функции частиц 40 нм из Figure 6."
         : "Углы наблюдения не найдены: радиометрическая нормализация Equation (3) не применена.",
       latitudeBounds && longitudeBounds ? "PMC отображаются по фактическим corner-координатам пикселей; площадь кластеров приблизительна." : "Corner-координаты отсутствуют: геометрия пикселей приблизительна.",
+      input.cloudLatitude && input.cloudLatitude !== latitude
+        ? "Геолокация PMC скорректирована на параллакс для высоты облака 83 км: то же облако, увиденное перекрывающимися орбитами, сходится в одну область при объединении площади."
+        : "Углы наблюдения не найдены: параллактическая поправка не применена, геолокация PMC берётся на эллипсоиде (h = 0), что может завышать площадь при слиянии перекрывающихся орбит.",
     ],
-    metadata: { algorithmVersion: "0.5.1", sourceFile: input.sourceFile, inNorthernPmcSeason: inSeason, articleMethod: input.signalMode === "albedo" ? "digitized-final-2.2-times-threshold-curve" : "approximated", settings, selectedWavelengthsNm: settings.wavelengths, signalMode: input.signalMode ?? "relative-radiance", processedAt: new Date().toISOString() },
+    metadata: { algorithmVersion: "0.5.3", sourceFile: input.sourceFile, inNorthernPmcSeason: inSeason, articleMethod: input.signalMode === "albedo" ? "digitized-final-2.2-times-threshold-curve" : "approximated", settings, selectedWavelengthsNm: settings.wavelengths, signalMode: input.signalMode ?? "relative-radiance", processedAt: new Date().toISOString() },
   };
 }

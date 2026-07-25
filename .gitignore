@@ -1,7 +1,34 @@
+# Dependencies
 node_modules/
+
+# Next.js build/export output
 .next/
 out/
+
+# Satellite data (large .nc files, orbit downloads)
 *.nc
-*.log
-data/
 *.part
+data/
+
+# AI tool / agent config, must not be pushed to a public repo
+.agents/
+.claude/
+.openai/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# TypeScript build info
+*.tsbuildinfo

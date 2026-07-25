@@ -40,6 +40,19 @@ const cleanRing = (coordinates: number[][]) => {
   return cleaned.length >= 4 && Math.abs(signedRingArea(cleaned)) > 1e-4 ? cleaned : null;
 };
 
+// The geometric area of a single feature's own footprint ring, independent of
+// any other feature (no polygon-clipping union). Used to weight a footprint
+// by its fractional cloud cover instead of counting the whole coarse pixel:
+// TROPOMI Band 1's native+binned pixel is large (~650-1250 km^2), but most
+// detections are well below the fully-cloudy reference signal, so a binary
+// "threshold crossed -> count the whole pixel" area overstates true coverage.
+export function featureFootprintAreaKm2(feature: PmcPointCollection["features"][number] | ResidualFieldCollection["features"][number]) {
+  const ring = feature.geometry.coordinates[0];
+  if (!ring?.length) return 0;
+  const cleaned = cleanRing(ring);
+  return cleaned ? Math.abs(signedRingArea(cleaned)) : 0;
+}
+
 export function multiPolygonAreaKm2(multiPolygon: ProjectedMultiPolygon | null) {
   if (!multiPolygon) return 0;
   return multiPolygon.reduce((total, polygon) => {

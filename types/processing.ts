@@ -44,6 +44,11 @@ export type PmcClusterCollection = GeoJSON.FeatureCollection<GeoJSON.Polygon, Pm
 export type ProcessingResult = {
   orbit: OrbitGeoJson;
   pixels: PmcPointCollection;
+  // Every pixel that individually passed the spectral+threshold test, before
+  // the minimumClusterSize connected-component filter. A genuine upper bound
+  // on `pixels` — used to show how much area the cluster-size filter removes,
+  // distinct from `pixels` itself (do not use this for the headline area).
+  allCandidates: PmcPointCollection;
   field: ResidualFieldCollection;
   clusters: PmcClusterCollection;
   metadata: Record<string, unknown>;
@@ -58,7 +63,14 @@ export const DEFAULT_SETTINGS: ProcessingSettings = {
   maxSza: 85,
   szaBinSize: 0.25,
   noiseMultiplier: 2.2,
-  minimumClusterSize: 1,
+  minimumClusterSize: 3,
+  // Closing (dilate -> erode) fills small gaps between nearby threshold
+  // crossings; measured against real orbits it increases total footprint
+  // area by ~25-30% (it adds pixels that never crossed the threshold), which
+  // dominates the ~15% reduction minimumClusterSize alone provides. Left off
+  // by default so the headline area reflects actual threshold crossings; it
+  // remains available as a user toggle for anyone who wants visually solid,
+  // hole-free clusters.
   morphologicalClosing: false,
   morphologicalOpening: false,
   maxIterations: 5,

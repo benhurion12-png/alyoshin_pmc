@@ -49,6 +49,23 @@ const pixelWeight = (input: SpatialInput, index: number) => {
   return Math.max(1e-8, (maxLat - minLat) * (maxLon - minLon) * Math.cos((minLat + maxLat) * Math.PI / 360));
 };
 
+const tightOuterCorners = (points: Array<[number, number]>, reference: number) => {
+  const meanLat = points.reduce((sum, [, lat]) => sum + lat, 0) / points.length;
+  const cosine = Math.max(1e-4, Math.cos(meanLat * Math.PI / 180));
+  const projected = points.map(([lon, lat]) => ({ lon, lat, x: (lon - reference) * cosine, y: lat }));
+  const pick = (score: (point: typeof projected[number]) => number, highest: boolean) =>
+    projected.reduce((selected, point) =>
+      (highest ? score(point) > score(selected) : score(point) < score(selected)) ? point : selected);
+  // Counter-clockwise: south-west, south-east, north-east, north-west.
+  const selected = [
+    pick((point) => point.x + point.y, false),
+    pick((point) => point.x - point.y, true),
+    pick((point) => point.x + point.y, true),
+    pick((point) => point.y - point.x, true),
+  ];
+  return selected.map(({ lon, lat }) => [lon, lat] as [number, number]);
+};
+
 export function spatialBin(input: SpatialInput): SpatialInput {
   const columnGroups = groupsFor(input.cols);
   const outputRows = Math.floor(input.rows / 2);
@@ -87,6 +104,7 @@ export function spatialBin(input: SpatialInput): SpatialInput {
       let totalWeight = 0, sumLat = 0, sumLon = 0, sumSza = 0, sumVza = 0, sumSaa = 0, sumVaa = 0;
       const sumSignals = new Float64Array(signals.length);
       let minLat = 90, maxLat = -90, minLon = Infinity, maxLon = -Infinity;
+      const footprintCorners: Array<[number, number]> = [];
       for (const index of valid) {
         const weight = pixelWeight(input, index);
         const lon = unwrap(input.longitude[index], reference);
@@ -105,6 +123,7 @@ export function spatialBin(input: SpatialInput): SpatialInput {
             if (Number.isFinite(lat) && Number.isFinite(cornerLon)) {
               minLat = Math.min(minLat, lat); maxLat = Math.max(maxLat, lat);
               minLon = Math.min(minLon, cornerLon); maxLon = Math.max(maxLon, cornerLon);
+              footprintCorners.push([cornerLon, lat]);
             }
           }
         }
@@ -121,8 +140,14 @@ export function spatialBin(input: SpatialInput): SpatialInput {
         minLat = latitude[outputIndex] - .03; maxLat = latitude[outputIndex] + .03;
         minLon = longitude[outputIndex] - .06; maxLon = longitude[outputIndex] + .06;
       }
-      latitudeBounds.set([minLat, minLat, maxLat, maxLat], outputIndex * 4);
-      longitudeBounds.set([minLon, maxLon, maxLon, minLon], outputIndex * 4);
+      if (footprintCorners.length >= 4) {
+        const corners = tightOuterCorners(footprintCorners, reference);
+        latitudeBounds.set(corners.map(([, lat]) => lat), outputIndex * 4);
+        longitudeBounds.set(corners.map(([lon]) => lon), outputIndex * 4);
+      } else {
+        latitudeBounds.set([minLat, minLat, maxLat, maxLat], outputIndex * 4);
+        longitudeBounds.set([minLon, maxLon, maxLon, minLon], outputIndex * 4);
+      }
     }
   }
   return { rows: outputRows, cols: outputCols, latitude, longitude, latitudeBounds, longitudeBounds, sza, viewingZenith, solarAzimuth, viewingAzimuth, signals, qualityMask };
