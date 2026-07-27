@@ -7,6 +7,7 @@ out/
 
 # Satellite data (large .nc files, orbit downloads)
 *.nc
+*.he5
 *.part
 data/
 

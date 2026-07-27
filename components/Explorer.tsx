@@ -12,6 +12,7 @@ import { DEFAULT_SETTINGS, type ProcessingResult, type ProcessingSettings } from
 
 const PmcMap = dynamic(() => import("@/components/map/PmcMap"), { ssr: false });
 const PolarMap = dynamic(() => import("@/components/map/PolarMap"), { ssr: false });
+const MlsTemperatureMap = dynamic(() => import("@/components/map/MlsTemperatureMap"), { ssr: false });
 const formatBytes = (n: number) => new Intl.NumberFormat("ru", { maximumFractionDigits: 1 }).format(n / 1024 / 1024) + " МБ";
 const EARTH_RADIUS_KM = 6371;
 // Figure 10 uses a common 50 km × 50 km comparison grid. TROPOMI colour
@@ -134,6 +135,7 @@ export default function Explorer() {
   const [result, setResult] = useState<ProcessingResult | null>(null);
   const [settings, setSettings] = useState<ProcessingSettings>(DEFAULT_SETTINGS);
   const [mapMode, setMapMode] = useState<"maplibre" | "polar">("maplibre");
+  const [scienceLayer, setScienceLayer] = useState<"pmc" | "temperature">("pmc");
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState({ stage: "Ожидание файла", percent: 0 });
   const [error, setError] = useState("");
@@ -358,22 +360,35 @@ export default function Explorer() {
         </aside>
 
         <section className="main-panel">
-          <div className="section-title"><b>02</b><span>ВЕРОЯТНЫЕ ПОЛЯРНЫЕ МЕЗОСФЕРНЫЕ ОБЛАКА</span>
-            <div className="projection-switch"><button className={mapMode === "maplibre" ? "active" : ""} onClick={() => setMapMode("maplibre")}>MAPLIBRE</button><button className={mapMode === "polar" ? "active" : ""} onClick={() => setMapMode("polar")}>POLAR</button></div>
-            {orbit ? <button className="download" onClick={() => download(orbit, "orbit.geojson")}>↓ ORBIT</button> : null}
+          <div className="science-tabs" role="tablist" aria-label="Научный слой">
+            <button role="tab" aria-selected={scienceLayer === "pmc"} className={scienceLayer === "pmc" ? "active" : ""} onClick={() => setScienceLayer("pmc")}>СЕРЕБРИСТЫЕ ОБЛАКА</button>
+            <button role="tab" aria-selected={scienceLayer === "temperature"} className={scienceLayer === "temperature" ? "active" : ""} onClick={() => setScienceLayer("temperature")}>ТЕМПЕРАТУРА · 83 КМ</button>
           </div>
-          {mapMode === "maplibre"
-            ? <PmcMap key={String(result?.metadata.processedAt ?? "empty")} orbit={orbit} field={result?.field ?? null} pixels={result?.pixels ?? null} clusters={result?.clusters ?? null} />
-            : <PolarMap field={result?.pixels ?? null} singleOrbit={Number(result?.metadata.orbitCount ?? 0) === 1} />}
-          <div className="map-status quality-legend"><span><i className="quality low" />0</span><span><i className="quality medium" />0,5</span><span><i className="quality high" />1,0</span><em>NORMALIZED RESIDUAL ALBEDO · 283 NM</em></div>
-          {result ? <div className="result-strip">
+          <div className="section-title"><b>02</b><span>{scienceLayer === "pmc" ? "ВЕРОЯТНЫЕ ПОЛЯРНЫЕ МЕЗОСФЕРНЫЕ ОБЛАКА" : "ТЕМПЕРАТУРА PMC-ПИКСЕЛЕЙ · AURA MLS"}</span>
+            {scienceLayer === "pmc" ? <div className="projection-switch"><button className={mapMode === "maplibre" ? "active" : ""} onClick={() => setMapMode("maplibre")}>MAPLIBRE</button><button className={mapMode === "polar" ? "active" : ""} onClick={() => setMapMode("polar")}>POLAR</button></div> : null}
+            {scienceLayer === "pmc" && orbit ? <button className="download" onClick={() => download(orbit, "orbit.geojson")}>↓ ORBIT</button> : null}
+          </div>
+          <div className={scienceLayer === "pmc" ? "" : "science-layer-hidden"}>
+            {mapMode === "maplibre"
+              ? <PmcMap key={String(result?.metadata.processedAt ?? "empty")} orbit={orbit} field={result?.field ?? null} pixels={result?.pixels ?? null} clusters={result?.clusters ?? null} />
+              : <PolarMap field={result?.pixels ?? null} singleOrbit={Number(result?.metadata.orbitCount ?? 0) === 1} />}
+          </div>
+          <div className={scienceLayer === "temperature" ? "" : "science-layer-hidden"}>
+            <MlsTemperatureMap
+              active={scienceLayer === "temperature"}
+              pixels={result?.pixels ?? null}
+              sourceFiles={result ? (Array.isArray(result.metadata.sourceFiles) ? result.metadata.sourceFiles.map(String) : [String(result.metadata.sourceFile ?? "")].filter(Boolean)) : []}
+            />
+          </div>
+          {scienceLayer === "pmc" ? <div className="map-status quality-legend"><span><i className="quality low" />0</span><span><i className="quality medium" />0,5</span><span><i className="quality high" />1,0</span><em>NORMALIZED RESIDUAL ALBEDO · 283 NM</em></div> : null}
+          {scienceLayer === "pmc" && result ? <div className="result-strip">
             <div><b>{result.field.features.length}</b><span>ячеек residual</span></div><div><b>{result.pixels.features.length}</b><span>PMC-пикселей</span></div><div><b>{result.clusters.features.length}</b><span>кластеров</span></div>
             <div><b className="blue-number">{result.pixels.features.filter((feature) => feature.properties.residual < 10e-6).length}</b><span>&lt;10×10⁻⁶</span></div>
             <div><b className="yellow-number">{result.pixels.features.filter((feature) => feature.properties.residual >= 10e-6 && feature.properties.residual < 20e-6).length}</b><span>10–20×10⁻⁶</span></div>
             <div><b className="red-number">{result.pixels.features.filter((feature) => feature.properties.residual >= 20e-6).length}</b><span>≥20×10⁻⁶</span></div>
             <button onClick={() => download(result.field, "residual-field.geojson")}>RESIDUAL FIELD ↓</button><button onClick={() => download(result.pixels, "pmc-pixels.geojson")}>PMC MASK ↓</button><button onClick={() => download(result.clusters, "pmc-clusters.geojson")}>PMC CLUSTERS ↓</button><button onClick={() => download(result.metadata, "metadata.json")}>METADATA ↓</button>
           </div> : null}
-          {areaStats ? <div className="area-summary">
+          {scienceLayer === "pmc" && areaStats ? <div className="area-summary">
             <div className="headline-stat">
               <span>ФРАКЦИОННАЯ ПЛОЩАДЬ (ВЗВЕШЕНО ПО ДОЛЕ СИГНАЛА ОТ 30×10⁻⁶ SR⁻¹)</span>
               <b>{formatArea(areaStats.fractionalAreaKm2)} км²</b>
@@ -401,7 +416,7 @@ export default function Explorer() {
               независимо, но принципиально ближе к тому, как AIM/CIPS оценивает покрытие по яркости, чем бинарный счёт.
             </p>
           </div> : null}
-          {result?.warnings.map((warning) => <div className="warning" key={warning}>{warning}</div>)}
+          {scienceLayer === "pmc" ? result?.warnings.map((warning) => <div className="warning" key={warning}>{warning}</div>) : null}
         </section>
       </section>
 
