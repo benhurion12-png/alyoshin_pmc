@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef } from "react";
+import { useMemo, useRef, useState } from "react";
 import { geoGraticule10, geoPath, geoStereographic } from "d3-geo";
 import { feature } from "topojson-client";
 import world from "world-atlas/countries-110m.json";
@@ -11,6 +11,7 @@ const color = (value: number) => value >= .9 ? "#a80000" : value >= .75 ? "#ff9d
 
 export default function PolarMap({ field, singleOrbit = false }: { field: ResidualFieldCollection | PmcPointCollection | null; singleOrbit?: boolean }) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const [selected, setSelected] = useState<{ x: number; y: number; latitude: number; longitude: number } | null>(null);
   const width = 900, height = 720;
   const { landPath, graticulePath, fieldPaths, projection } = useMemo(() => {
     const projection = geoStereographic()
@@ -64,6 +65,18 @@ export default function PolarMap({ field, singleOrbit = false }: { field: Residu
   };
 
   const pole = projection([0, 90]);
+  const selectCoordinate = (event: React.MouseEvent<SVGPathElement>) => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const point = svg.createSVGPoint();
+    point.x = event.clientX; point.y = event.clientY;
+    const matrix = svg.getScreenCTM();
+    if (!matrix) return;
+    const local = point.matrixTransform(matrix.inverse());
+    const coordinate = projection.invert?.([local.x, local.y]);
+    if (!coordinate) return;
+    setSelected({ x: local.x, y: local.y, longitude: coordinate[0], latitude: coordinate[1] });
+  };
   return (
     <div className="polar-wrap">
       <svg ref={svgRef} className="polar-map" viewBox={`0 0 ${width} ${height}`} xmlns="http://www.w3.org/2000/svg">
@@ -71,8 +84,13 @@ export default function PolarMap({ field, singleOrbit = false }: { field: Residu
         <circle cx={width / 2} cy={height / 2} r="328" fill="#a9d9e6" stroke="#6ee7ef" strokeWidth="2" />
         <path d={graticulePath} fill="none" stroke="#dff7fa" strokeOpacity=".38" strokeWidth=".7" />
         <path d={landPath} fill="#f1f0eb" stroke="#bacbd0" strokeWidth=".5" />
-        {fieldPaths.map((item, index) => <path key={`field-${index}`} d={item.d} fill={color(item.value)} stroke="none" opacity=".88" />)}
+        {fieldPaths.map((item, index) => <path key={`field-${index}`} d={item.d} fill={color(item.value)} stroke="none" opacity=".88" cursor="pointer" onClick={selectCoordinate} />)}
         {pole ? <circle cx={pole[0]} cy={pole[1]} r="3" fill="#ffffff" /> : null}
+        {selected ? <g pointerEvents="none" transform={`translate(${Math.min(selected.x + 10, width - 235)} ${Math.max(selected.y - 50, 8)})`}>
+          <rect width="225" height="48" rx="3" fill="#ffffff" stroke="#263943" />
+          <text x="9" y="19" fill="#07131d" fontFamily="monospace" fontSize="12">Широта: {selected.latitude.toFixed(5)}°</text>
+          <text x="9" y="37" fill="#07131d" fontFamily="monospace" fontSize="12">Долгота: {selected.longitude.toFixed(5)}°</text>
+        </g> : null}
         <text x="28" y="38" fill="#78e8ef" fontFamily="monospace" fontSize="15" letterSpacing="3">NORTH POLAR STEREOGRAPHIC · PMC</text>
         <text x="28" y={height - 25} fill="#8299a6" fontFamily="monospace" fontSize="11">{singleOrbit ? "70°N–90°N · NATIVE 2×2 / 2×3 BINS" : "50°N–90°N · DAILY 50 KM GRID · FIGURE 10"}</text>
       </svg>

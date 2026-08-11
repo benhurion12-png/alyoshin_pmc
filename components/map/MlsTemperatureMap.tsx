@@ -137,8 +137,9 @@ export default function MlsTemperatureMap({ pixels, sourceFiles, active }: { pix
         instance.on("click", "mls-pmc-temperature-pixels", (event) => {
           const p = event.features?.[0]?.properties;
           if (!p) return;
+          const { lat, lng } = event.lngLat;
           new maplibregl.Popup().setLngLat(event.lngLat).setHTML(
-            `<strong>${Number(p.temperature).toFixed(2)} K</strong><br>Aura MLS · ${Number(p.altitudeKm).toFixed(2)} км<br>Давление: ${Number(p.pressureHpa).toFixed(4)} hPa<br>Точность: ±${Number(p.precisionK).toFixed(2)} K<br>Профиль MLS: ${Number(p.distanceKm).toFixed(1)} км`,
+            `<strong>${Number(p.temperature).toFixed(2)} K</strong><br>Широта клика: ${lat.toFixed(5)}°<br>Долгота клика: ${lng.toFixed(5)}°<br>Координаты MLS: ${Number(p.latitude).toFixed(5)}°, ${Number(p.longitude).toFixed(5)}°<br>Aura MLS · ${Number(p.altitudeKm).toFixed(2)} км<br>Давление: ${Number(p.pressureHpa).toFixed(4)} hPa<br>Точность: ±${Number(p.precisionK).toFixed(2)} K<br>Профиль MLS: ${Number(p.distanceKm).toFixed(1)} км`,
           ).addTo(instance);
         });
       }

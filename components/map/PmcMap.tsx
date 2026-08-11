@@ -105,7 +105,8 @@ export default function PmcMap({ orbit, field, pixels, clusters }: { orbit: Orbi
       });
       const popup = (event: maplibregl.MapLayerMouseEvent) => {
         const p = event.features?.[0]?.properties; if (!p) return;
-        new maplibregl.Popup().setLngLat(event.lngLat).setHTML(`<strong>Вероятный PMC · ${String(p.qualityLevel).toUpperCase()}</strong><br>Residual: ${Number(p.residual).toExponential(3)}<br>Порог: ${Number(p.threshold).toExponential(3)}<br>S/N: ${Number(p.signalToNoise).toFixed(2)}<br>Detection score: ${Number(p.detectionScore).toFixed(2)}<br>Пикселей в кластере: ${p.pixelCount}`).addTo(instance);
+        const { lat, lng } = event.lngLat;
+        new maplibregl.Popup().setLngLat(event.lngLat).setHTML(`<strong>Вероятный PMC · ${String(p.qualityLevel).toUpperCase()}</strong><br>Широта: ${lat.toFixed(5)}°<br>Долгота: ${lng.toFixed(5)}°<br>Residual: ${Number(p.residual).toExponential(3)}<br>Порог: ${Number(p.threshold).toExponential(3)}<br>S/N: ${Number(p.signalToNoise).toFixed(2)}<br>Detection score: ${Number(p.detectionScore).toFixed(2)}<br>Пикселей в кластере: ${p.pixelCount}`).addTo(instance);
       };
       instance.off("click", "pmc-pixels", popup);
       instance.on("click", "pmc-pixels", popup);
