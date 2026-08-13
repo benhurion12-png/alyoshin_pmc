@@ -8,7 +8,7 @@ const MLS_FOOTPRINT_RADIUS_KM = 90;
 const endpoint = process.env.NODE_ENV === "development" ? "/api/earthdata-mls" : "/.netlify/functions/earthdata-mls";
 
 type Sample = { latitude: number; longitude: number; temperature: number; altitudeKm: number; pressureHpa: number; precisionK: number; timeUtc: string };
-type Properties = Sample & { distanceKm: number };
+type Properties = Sample & { distanceKm: number; collocation: "observed" | "estimated" };
 type Collection = GeoJSON.FeatureCollection<GeoJSON.Polygon, Properties>;
 
 const observationDate = (sourceFiles: string[]) => {
@@ -44,8 +44,16 @@ const collocate = (pixels: PmcPointCollection, samples: Sample[]): Collection =>
       const distance = distanceKm(pixelCenter, [sample.longitude, sample.latitude]);
       if (distance < nearestDistance) { nearest = sample; nearestDistance = distance; }
     }
-    return nearest && nearestDistance <= MLS_FOOTPRINT_RADIUS_KM
-      ? [{ type: "Feature" as const, geometry: pixel.geometry, properties: { ...nearest, distanceKm: nearestDistance } }]
+    return nearest
+      ? [{
+          type: "Feature" as const,
+          geometry: pixel.geometry,
+          properties: {
+            ...nearest,
+            distanceKm: nearestDistance,
+            collocation: nearestDistance <= MLS_FOOTPRINT_RADIUS_KM ? "observed" as const : "estimated" as const,
+          },
+        }]
       : [];
   }),
 });
@@ -133,13 +141,20 @@ export default function MlsTemperatureMap({ pixels, sourceFiles, active }: { pix
       if (source) source.setData(data);
       else {
         instance.addSource("mls-pmc-temperature", { type: "geojson", data });
-        instance.addLayer({ id: "mls-pmc-temperature-pixels", type: "fill", source: "mls-pmc-temperature", paint: { "fill-color": colorScale, "fill-opacity": .9, "fill-outline-color": "#e4fbff" } });
+        instance.addLayer({
+          id: "mls-pmc-temperature-pixels", type: "fill", source: "mls-pmc-temperature",
+          paint: {
+            "fill-color": colorScale,
+            "fill-opacity": ["case", ["==", ["get", "collocation"], "observed"], .9, .58],
+            "fill-outline-color": ["case", ["==", ["get", "collocation"], "observed"], "#e4fbff", "#78909c"],
+          },
+        });
         instance.on("click", "mls-pmc-temperature-pixels", (event) => {
           const p = event.features?.[0]?.properties;
           if (!p) return;
           const { lat, lng } = event.lngLat;
           new maplibregl.Popup().setLngLat(event.lngLat).setHTML(
-            `<strong>${Number(p.temperature).toFixed(2)} K</strong><br>Широта клика: ${lat.toFixed(5)}°<br>Долгота клика: ${lng.toFixed(5)}°<br>Координаты MLS: ${Number(p.latitude).toFixed(5)}°, ${Number(p.longitude).toFixed(5)}°<br>Aura MLS · ${Number(p.altitudeKm).toFixed(2)} км<br>Давление: ${Number(p.pressureHpa).toFixed(4)} hPa<br>Точность: ±${Number(p.precisionK).toFixed(2)} K<br>Профиль MLS: ${Number(p.distanceKm).toFixed(1)} км`,
+            `<strong>${Number(p.temperature).toFixed(2)} K</strong><br>${p.collocation === "observed" ? "Прямая коллокация MLS" : "Пространственная оценка по ближайшему MLS"}<br>Широта клика: ${lat.toFixed(5)}°<br>Долгота клика: ${lng.toFixed(5)}°<br>Координаты MLS: ${Number(p.latitude).toFixed(5)}°, ${Number(p.longitude).toFixed(5)}°<br>Aura MLS · ${Number(p.altitudeKm).toFixed(2)} км<br>Давление: ${Number(p.pressureHpa).toFixed(4)} hPa<br>Точность профиля: ±${Number(p.precisionK).toFixed(2)} K<br>Расстояние до профиля MLS: ${Number(p.distanceKm).toFixed(1)} км`,
           ).addTo(instance);
         });
       }
@@ -156,8 +171,8 @@ export default function MlsTemperatureMap({ pixels, sourceFiles, active }: { pix
   return <div className="sofie-panel">
     <div className="sofie-toolbar"><b>AURA MLS V006 · {resolvedDate || (date ? `ПОИСК К ${date.toISOString().slice(0, 10)}` : "ОЖИДАНИЕ TROPOMI")}</b><span>{progress}</span></div>
     <div className="map-wrap"><div ref={container} className="map" aria-label="Температура Aura MLS только в PMC-пикселях" />{!data?.features.length ? <div className="sofie-empty">{progress || "Ожидание данных…"}</div> : null}</div>
-    {range ? <div className="temperature-legend"><b>{range.min.toFixed(1)} K</b><i /><b>{range.max.toFixed(1)} K</b><span>{data?.features.length} PMC-пикселей · кликните для точного значения</span></div> : null}
+    {range ? <div className="temperature-legend"><b>{range.min.toFixed(1)} K</b><i /><b>{range.max.toFixed(1)} K</b><span>{data?.features.length} PMC-пикселей · полупрозрачные — пространственная оценка</span></div> : null}
     {error ? <div className="error">{error}</div> : null}
-    <p className="sofie-note">Температура ML2T выбрана по давлению уровня ML2GPH, высота которого ближе всего к 83 км. Окрашены только обнаруженные TROPOMI PMC-пиксели в пределах 90 км от центра профиля — характерного вдольтрассового полуследа MLS; остальные температуры атмосферы не показаны.</p>
+    <p className="sofie-note">Температура ML2T выбрана по уровню ML2GPH, ближайшему к высоте 83 км. Все обнаруженные TROPOMI PMC-пиксели окрашены по ближайшему качественному профилю Aura MLS. Яркие пиксели находятся в пределах измерительного полуследа 90 км; полупрозрачные лежат дальше и являются пространственной оценкой. Расстояние до профиля указано по клику.</p>
   </div>;
 }
